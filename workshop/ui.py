@@ -215,8 +215,12 @@ class Card(tk.Frame):
         c = self.art
         c.delete("all")
         c.configure(bg=self.app.colour)
+        st = core.app_state(self.hub.state, self.app.id)
         p = core.art_path(self.app)
-        img = self.hub.art_image(self.app, p, self.w, self.h) if p else None
+        if self.app.icon and not st.get("custom_art"):
+            img = self.hub.icon_image(self.app, self.w, self.h)
+        else:
+            img = self.hub.art_image(self.app, p, self.w, self.h) if p else None
         if img is not None:
             self._photo = img
             c.create_image(0, 0, anchor="nw", image=img)
@@ -560,6 +564,24 @@ class Hub:
         elif not apps:
             tk.Label(self.grid, text="No apps match your search.", bg=BG, fg=MUTED, font=FONT).grid(row=0, column=0, sticky="w")
 
+    def icon_image(self, app, w, h):
+        """The app's own icon, centred on its colour."""
+        key = (app.id, "icon", w, h)
+        if key in self.art_cache:
+            return self.art_cache[key]
+        try:
+            from PIL import Image
+            ic = Image.open(core.ASSETS / app.icon).convert("RGBA")
+            size = int(h * 0.78)
+            ic = ic.resize((size, size), Image.LANCZOS)
+            bg = Image.new("RGBA", (w, h), app.colour)
+            bg.alpha_composite(ic, ((w - size) // 2, (h - size) // 2))
+            ph = photo_from_pil(bg.convert("RGB"))
+        except Exception:
+            return None
+        self.art_cache[key] = ph
+        return ph
+
     def art_image(self, app, path, w, h):
         try:
             mtime = path.stat().st_mtime
@@ -832,7 +854,7 @@ class Hub:
             m.add_command(label="Request a change…", command=lambda: self.request_change(app))
             m.add_separator()
             m.add_command(label="Change picture…", command=lambda: self.change_picture(app))
-            m.add_command(label="Retake picture next time it's open", command=lambda: self.retake(app))
+            m.add_command(label="Use its icon again" if app.icon else "Retake picture next time it's open", command=lambda: self.retake(app))
         else:
             m.add_command(label="Add from a folder…", command=lambda: self.add_from_folder(app))
         if app.kind == "custom":
@@ -1285,6 +1307,11 @@ class Hub:
 
     def retake(self, app):
         st = core.app_state(self.state, app.id)
+        if app.icon:
+            st.pop("custom_art", None)
+            core.save_state(self.state)
+            self.refresh_cards()
+            return
         st["recapture"] = True
         st.pop("custom_art", None)
         core.save_state(self.state)
@@ -1336,7 +1363,7 @@ class Hub:
                 for app in core.all_apps(self.state):
                     pids = core.pids_for(app, procs)
                     st = core.app_state(self.state, app.id)
-                    if not pids or st.get("custom_art"):
+                    if not pids or st.get("custom_art") or app.icon:
                         self.capture_seen.pop(app.id, None)
                         continue
                     need = st.get("recapture") or not core.art_path(app)

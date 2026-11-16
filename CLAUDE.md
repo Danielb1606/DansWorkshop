@@ -69,6 +69,7 @@ Run `python tests/test_core.py` first.
 
 ## History
 - 1.0.0 - first version.
+- 1.3.1 - app icons on tiles (`icon` field, assets/app_<id>.png): Daniels Assignment = red flask (Dan picked option A).
 - 1.3.0 - Deadlock Auto Config tile; cards no longer cut off by the scrollbar.
 - 1.2.0 - notes in the Workshop, automatic notes backups, restore, Install Obsidian.
 - 1.1.0 - Obsidian tile.

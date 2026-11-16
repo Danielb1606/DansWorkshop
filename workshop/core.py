@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
-__version__ = "1.3.0"
+__version__ = "1.3.1"
 APP_NAME = "Dan's Workshop"
 EXE_NAME = "Dan's Workshop.exe"
 HUB_REPO = "Danielb1606/DansWorkshop"
@@ -159,6 +159,7 @@ class AppDef:
     external: List[str] = field(default_factory=list)   # installed elsewhere: possible exe paths (linked, not copied)
     play_label: str = "Play"
     initials: str = ""
+    icon: str = ""                      # assets/<icon>: shown on the tile instead of a screenshot
     actions: List[Tuple[str, str]] = field(default_factory=list)   # extra (label, file) on the card menu
 
     @property
@@ -200,7 +201,7 @@ BUILTIN = [
     AppDef(
         id="daniels-assignment", name="Daniels Assignment", folder="Daniels Assignment",
         exe="DanielsAssignment.exe", kind="github-exe", repo="Danielb1606/DanielsAssignment",
-        asset="DanielsAssignment.exe",
+        asset="DanielsAssignment.exe", icon="app_daniels-assignment.png",
         import_from=r"%USERPROFILE%\Desktop\GamingProgram",
         import_skip=["*.old.exe", "*.new.exe", "*.failed.exe", "*-report-*.zip"],
         colour="#26364a", blurb="Flask automation for the PoE-style UI."),
