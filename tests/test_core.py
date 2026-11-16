@@ -110,4 +110,18 @@ check("PID eq 1234" in sc and "_internal.old" in sc and "--update-failed" in sc 
 msg = core.hub_startup(["--updated", "1.0.0"])
 check("updated" in msg and (core.DATA_DIR / "update" / "started.flag").exists(), "update handshake")
 
+# Obsidian: linked (not copied), only shown when installed, vaults read from its settings
+os.environ["LOCALAPPDATA"] = str(tmp / "home" / "AppData" / "Local")
+check(all(a.id != "obsidian" for a in core.all_apps(core.load_state())), "Obsidian hidden when not installed")
+ob = tmp / "home" / "AppData" / "Local" / "Programs" / "Obsidian"; ob.mkdir(parents=True); (ob / "Obsidian.exe").write_bytes(b"x")
+o = next((a for a in core.all_apps(core.load_state()) if a.id == "obsidian"), None)
+check(o is not None and o.installed and o.exe_path == ob / "Obsidian.exe", "Obsidian found where it's installed")
+check(not str(o.exe_path).startswith(str(core.APPS_DIR)), "Obsidian is linked, not copied")
+cfgdir = tmp / "home" / "AppData" / "Roaming" / "obsidian"; cfgdir.mkdir(parents=True)
+(cfgdir / "obsidian.json").write_text(json.dumps({"vaults": {"a": {"path": r"C:\Notes\Dan Notes", "ts": 5, "open": True},
+                                                            "b": {"path": r"C:\Old Vault", "ts": 1}}}))
+v = core.obsidian_vaults()
+check([x["path"] for x in v] == [r"C:\Notes\Dan Notes", r"C:\Old Vault"], "vaults listed, newest first")
+check(core.obsidian_link(r"C:\Notes\Dan Notes") == "obsidian://open?path=C%3A%5CNotes%5CDan%20Notes", "vault link")
+
 print(f"all {ok} checks passed")

@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
-__version__ = "1.0.1"
+__version__ = "1.1.0"
 APP_NAME = "Dan's Workshop"
 EXE_NAME = "Dan's Workshop.exe"
 HUB_REPO = "Danielb1606/DansWorkshop"
@@ -153,13 +153,22 @@ class AppDef:
     portable_profile: bool = False      # point the browser data at apps\<folder>\profile
     colour: str = "#2a2f38"
     blurb: str = ""
+    external: List[str] = field(default_factory=list)   # installed elsewhere: possible exe paths (linked, not copied)
 
     @property
     def dir(self) -> Path:
+        if self.external:
+            return self.exe_path.parent
         return APPS_DIR / self.folder
 
     @property
     def exe_path(self) -> Path:
+        if self.external:
+            for c in self.external:
+                p = expand(c)
+                if p.is_file():
+                    return p
+            return expand(self.external[0])
         return self.dir / self.exe
 
     @property
@@ -189,13 +198,21 @@ BUILTIN = [
         import_from=r"%USERPROFILE%\Desktop\GamingProgram",
         import_skip=["*.old.exe", "*.new.exe", "*.failed.exe", "*-report-*.zip"],
         colour="#26364a", blurb="Flask automation for the PoE-style UI."),
+    AppDef(
+        id="obsidian", name="Obsidian", folder="", exe="Obsidian.exe", kind="external",
+        external=[r"%LOCALAPPDATA%\Programs\Obsidian\Obsidian.exe", r"%PROGRAMFILES%\Obsidian\Obsidian.exe",
+                  r"%LOCALAPPDATA%\Obsidian\Obsidian.exe"],
+        colour="#2e2640", blurb="Your notes."),
 ]
 
 
 def expand(p: str) -> Path:
     if not p:
         return Path()
-    for var, val in (("%USERPROFILE%", home()), ("%APPDATA%", appdata())):
+    local = Path(os.environ.get("LOCALAPPDATA") or (home() / "AppData" / "Local"))
+    progs = Path(os.environ.get("PROGRAMFILES") or r"C:\Program Files")
+    for var, val in (("%USERPROFILE%", home()), ("%APPDATA%", appdata()), ("%LOCALAPPDATA%", local),
+                     ("%PROGRAMFILES%", progs)):
         if p.startswith(var):
             return Path(val).joinpath(*[x for x in p[len(var):].split("\\") if x])
     return Path(os.path.expandvars(p))
@@ -214,7 +231,7 @@ def save_state(st: dict) -> None:
 
 def all_apps(state: Optional[dict] = None) -> List[AppDef]:
     state = state if state is not None else load_state()
-    apps = list(BUILTIN)
+    apps = [a for a in BUILTIN if not a.external or a.installed]
     for c in state.get("custom", []):
         try:
             apps.append(AppDef(id=c["id"], name=c["name"], folder=c["folder"], exe=c["exe"],
@@ -537,14 +554,42 @@ def launch_env(app: AppDef) -> dict:
     return env
 
 
-def launch(app: AppDef) -> subprocess.Popen:
+def launch(app: AppDef, vault: str = ""):
     if not app.installed:
         raise RuntimeError(f"{app.name} isn't installed")
+    if app.external:
+        launch_as_user(obsidian_link(vault) if vault else str(app.exe_path))
+        return None
     flags = 0
     if IS_WIN:
         flags = 0x00000008 | 0x00000200            # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
     return subprocess.Popen([str(app.exe_path)], cwd=str(app.dir), env=launch_env(app),
                             creationflags=flags, close_fds=True)
+
+
+def launch_as_user(target: str) -> None:
+    """Start a program or link as the normal (not administrator) user. Explorer
+    runs un-elevated, so whatever it starts does too."""
+    if IS_WIN:
+        subprocess.Popen(["explorer.exe", target], creationflags=0x08000000, close_fds=True)
+    else:
+        subprocess.Popen(["xdg-open", target])
+
+
+def obsidian_vaults() -> List[dict]:
+    """Vaults Obsidian knows about: [{'name', 'path', 'open'}], most recently used first."""
+    d = read_json(appdata() / "obsidian" / "obsidian.json", {})
+    out = []
+    for v in (d.get("vaults") or {}).values():
+        p = v.get("path")
+        if p:
+            out.append({"name": Path(p).name, "path": p, "open": bool(v.get("open")), "ts": v.get("ts", 0)})
+    return sorted(out, key=lambda v: -v["ts"])
+
+
+def obsidian_link(vault_path: str) -> str:
+    from urllib.parse import quote
+    return "obsidian://open?path=" + quote(vault_path, safe="")
 
 
 def open_folder(path: Path) -> None:
@@ -934,7 +979,7 @@ class Checker:
         def work():
             res, errs, rels = {}, {}, {}
             for app in apps:
-                if app.kind == "custom":
+                if app.kind in ("custom", "external"):
                     continue
                 try:
                     if app.kind == "github-exe":

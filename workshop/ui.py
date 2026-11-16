@@ -259,7 +259,7 @@ class Card(tk.Frame):
             self.btn.set("Bring it in" if a.import_from else "Install", "outline")
         elif running:
             self.btn.set("Show window", "plain")
-        elif upd and a.kind != "custom":
+        elif upd and a.kind not in ("custom", "external"):
             self.btn.set(f"Update to v{upd.version}", "outline")
         else:
             self.btn.set("Play", "primary")
@@ -637,7 +637,7 @@ class Hub:
         sc.pack(fill="both", expand=True, padx=(22, 8), pady=(14, 0))
         rows = [("hub", core.APP_NAME, core.__version__, self.checker.results.get("hub"), None)]
         for a in core.all_apps(self.state):
-            if a.kind == "custom":
+            if a.kind in ("custom", "external"):
                 continue
             rows.append((a.id, a.name, core.app_state(self.state, a.id).get("version", ""), self.checker.results.get(a.id), a))
         for key, name, have, info, app in rows:
@@ -797,7 +797,7 @@ class Hub:
 
     def update_for(self, app) -> Optional[core.UpdateInfo]:
         info = self.checker.results.get(app.id)
-        if not info or not app.installed or app.kind == "custom":
+        if not info or not app.installed or app.kind in ("custom", "external"):
             return None
         have = core.app_state(self.state, app.id).get("version", "")
         if not have or core.newer(info.version, have):
@@ -813,6 +813,27 @@ class Hub:
 
     def card_menu(self, app, x, y):
         m = self.menu()
+        if app.id == "obsidian" and app.installed:
+            vaults = core.obsidian_vaults()
+            default = core.app_state(self.state, app.id).get("vault", "")
+            if vaults:
+                sub = tk.Menu(m, tearoff=0, bg=CARD, fg=TEXT, activebackground=RAISED, activeforeground=TEXT, font=FONT)
+                for v in vaults:
+                    sub.add_command(label=v["name"], command=lambda p=v["path"]: self.play(app, p))
+                m.add_cascade(label="Open vault", menu=sub)
+                pick = tk.Menu(m, tearoff=0, bg=CARD, fg=TEXT, activebackground=RAISED, activeforeground=TEXT, font=FONT)
+                pick.add_command(label=("✓ " if not default else "   ") + "Whatever was open last", command=lambda: self._set_vault(app, ""))
+                for v in vaults:
+                    pick.add_command(label=("✓ " if default == v["path"] else "   ") + v["name"],
+                                     command=lambda p=v["path"]: self._set_vault(app, p))
+                m.add_cascade(label="Play opens…", menu=pick)
+                if default:
+                    m.add_command(label="Open the notes folder", command=lambda: core.open_folder(Path(default)))
+            m.add_separator()
+            m.add_command(label="Change picture…", command=lambda: self.change_picture(app))
+            m.add_command(label="Retake picture next time it's open", command=lambda: self.retake(app))
+            m.tk_popup(x, y)
+            return
         if app.installed:
             m.add_command(label="Open folder", command=lambda: core.open_folder(app.dir))
             m.add_command(label="Request a change…", command=lambda: self.request_change(app))
@@ -845,9 +866,9 @@ class Hub:
             return
         self.play(app)
 
-    def play(self, app):
+    def play(self, app, vault: str = ""):
         try:
-            core.launch(app)
+            core.launch(app, vault or core.app_state(self.state, app.id).get("vault", ""))
         except Exception as e:
             messagebox.showerror(core.APP_NAME, f"Couldn't open {app.name}:\n{e}", parent=self.root)
             return
@@ -1038,6 +1059,12 @@ class Hub:
 
         threading.Thread(target=work, daemon=True).start()
         self._import_progress()
+
+    def _set_vault(self, app, path):
+        core.app_state(self.state, app.id)["vault"] = path
+        core.save_state(self.state)
+        name = Path(path).name if path else "whatever vault was open last"
+        self.say(f"Play on Obsidian now opens {name}.", "good")
 
     def add_app(self):
         AddAppDialog(self)

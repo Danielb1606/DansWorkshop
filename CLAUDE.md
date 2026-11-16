@@ -26,6 +26,10 @@ opens, shows and updates them. Owner: GitHub `Danielb1606`. Repo: `Danielb1606/D
 - **Daniels Assignment** (`daniels-assignment`): one-file PyInstaller exe from `Danielb1606/DanielsAssignment`
   releases; self-updates. Installed version is found by matching the exe size to release asset sizes.
   Imported from `Desktop\GamingProgram`.
+- **Obsidian** (`obsidian`, kind `external`): Dan's notes. Linked, NOT copied (it has its own installer and
+  updater); found at %LOCALAPPDATA%\Programs\Obsidian\Obsidian.exe (hidden if not installed). Launched as the
+  normal user via explorer.exe (admin breaks obsidian:// links / drag-drop). Vaults read from
+  %APPDATA%\obsidian\obsidian.json; card menu: Open vault, Play opens… (state `vault`). No updates row.
 - Custom apps: "Add an app" copies the exe's folder into apps\ (kind `custom`, no updates).
 
 ## Behaviour decisions (from Dan)
@@ -53,4 +57,5 @@ Run `python tests/test_core.py` first.
 
 ## History
 - 1.0.0 - first version.
+- 1.1.0 - Obsidian tile.
 - 1.0.1 - sharper, bolder toolbox icon (each size drawn separately by make_icon.py; window uses iconphoto with all sizes).
