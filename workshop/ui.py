@@ -203,7 +203,8 @@ class Card(tk.Frame):
         more.bind("<Button-1>", lambda e: hub.card_menu(app, e.x_root, e.y_root))
         self.bind("<Button-3>", lambda e: hub.card_menu(app, e.x_root, e.y_root))
         self.art.bind("<Button-3>", lambda e: hub.card_menu(app, e.x_root, e.y_root))
-        self.meta = tk.Label(body, text="", bg=CARD, fg=MUTED, font=SMALL, anchor="w")
+        self.meta = tk.Label(body, text="", bg=CARD, fg=MUTED, font=SMALL, anchor="w", justify="left",
+                             wraplength=max(120, width - 28))
         self.meta.pack(fill="x", pady=(2, 10))
         self.btn = Btn(body, "Play", lambda: hub.primary(app), kind="primary", pady=6)
         self.btn.pack(fill="x")
@@ -220,10 +221,10 @@ class Card(tk.Frame):
             self._photo = img
             c.create_image(0, 0, anchor="nw", image=img)
         else:
-            initials = "".join(w[0] for w in self.app.name.split()[:2]).upper()
+            initials = self.app.initials or "".join(w[0] for w in self.app.name.split()[:2]).upper()
             c.create_text(self.w // 2, self.h // 2 - 6, text=initials, fill=_mix("#ffffff", self.app.colour, 0.55),
                           font=("Segoe UI Semibold", max(18, self.w // 7)))
-            hint = "Picture appears after first use" if self.app.installed else ""
+            hint = "Picture appears after first use" if self.app.installed and self.app.kind != "script" else ""
             c.create_text(self.w // 2, self.h - 16, text=hint, fill=_mix("#ffffff", self.app.colour, 0.4), font=SMALL)
 
     def _pill(self, text, dot):
@@ -247,7 +248,7 @@ class Card(tk.Frame):
         if not a.installed:
             bits.append("not installed on this PC" if a.external else "not in the Workshop yet")
         elif st.get("last_opened"):
-            bits.append(f"opened {core.ago(st['last_opened'])}")
+            bits.append(f"{'last run' if a.kind == 'script' else 'opened'} {core.ago(st['last_opened'])}")
         else:
             bits.append(a.blurb or "not opened yet")
         self.meta.configure(text="  ·  ".join(bits))
@@ -260,10 +261,10 @@ class Card(tk.Frame):
                          "outline")
         elif running:
             self.btn.set("Show window", "plain")
-        elif upd and a.kind not in ("custom", "external"):
+        elif upd and a.kind not in ("custom", "external", "script"):
             self.btn.set(f"Update to v{upd.version}", "outline")
         else:
-            self.btn.set("Play", "primary")
+            self.btn.set(a.play_label, "primary")
 
 
 class AddCard(tk.Frame):
@@ -534,7 +535,8 @@ class Hub:
     def fill_grid(self, force=False):
         if self.page != "library" or not self.grid.winfo_exists():
             return
-        width = max(300, self.scroll.canvas.winfo_width() - 14)
+        # leave room for the scrollbar whether or not it's showing, so cards never get cut off
+        width = max(300, self.scroll.winfo_width() - 22)
         cols = 3 if width >= 600 else 2 if width >= 400 else 1
         cw = (width - GAP * (cols - 1)) // cols
         apps = self.sorted_apps()
@@ -588,7 +590,8 @@ class Hub:
         items = []
         cands = core.import_candidates(self.state)
         if cands and "import" not in self.busy:
-            names = " and ".join(a.name for a, _ in cands)
+            ns = [a.name for a, _ in cands]
+            names = ns[0] if len(ns) == 1 else ", ".join(ns[:-1]) + " and " + ns[-1]
             items.append((f"Found {names} on your Desktop. Bring {'them' if len(cands) > 1 else 'it'} into the "
                           f"Workshop with all saved data. The originals stay where they are as a backup.",
                           [("Bring them in" if len(cands) > 1 else "Bring it in", self.import_all)], "accent", False))
@@ -638,7 +641,7 @@ class Hub:
         sc.pack(fill="both", expand=True, padx=(22, 8), pady=(14, 0))
         rows = [("hub", core.APP_NAME, core.__version__, self.checker.results.get("hub"), None)]
         for a in core.all_apps(self.state):
-            if a.kind in ("custom", "external"):
+            if a.kind in ("custom", "external", "script"):
                 continue
             rows.append((a.id, a.name, core.app_state(self.state, a.id).get("version", ""), self.checker.results.get(a.id), a))
         for key, name, have, info, app in rows:
@@ -798,7 +801,7 @@ class Hub:
 
     def update_for(self, app) -> Optional[core.UpdateInfo]:
         info = self.checker.results.get(app.id)
-        if not info or not app.installed or app.kind in ("custom", "external"):
+        if not info or not app.installed or app.kind in ("custom", "external", "script"):
             return None
         have = core.app_state(self.state, app.id).get("version", "")
         if not have or core.newer(info.version, have):
@@ -818,6 +821,12 @@ class Hub:
             self._obsidian_menu(m, app)
             m.tk_popup(x, y)
             return
+        if app.installed and app.kind == "script":
+            for label, file in app.actions:
+                m.add_command(label=label, command=lambda l=label, f=file: self.run_action(app, l, f))
+            if (app.dir / "mods").is_dir():
+                m.add_command(label="Open mods folder", command=lambda: core.open_folder(app.dir / "mods"))
+            m.add_separator()
         if app.installed:
             m.add_command(label="Open folder", command=lambda: core.open_folder(app.dir))
             m.add_command(label="Request a change…", command=lambda: self.request_change(app))
@@ -845,6 +854,9 @@ class Hub:
             else:
                 self.add_from_folder(app)
             return
+        if app.kind == "script":
+            self.run_action(app, app.play_label, app.exe)
+            return
         if self.is_running(app):
             core.bring_to_front(core.main_window(core.pids_for(app, self.procs)))
             return
@@ -871,6 +883,17 @@ class Hub:
             self.root.iconify()
         elif after == "close":
             self.root.after(1500, self.root.destroy)
+
+    def run_action(self, app, label, file):
+        try:
+            core.run_script(app, file)
+        except Exception as e:
+            messagebox.showerror(core.APP_NAME, f"Couldn't run {label}:\n{e}", parent=self.root)
+            return
+        core.app_state(self.state, app.id)["last_opened"] = time.time()
+        core.save_state(self.state)
+        core.log_activity(app.name, label.lower())
+        self.refresh_cards()
 
     def check_updates(self, quiet=False):
         apps = [a for a in core.all_apps(self.state)]

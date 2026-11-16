@@ -158,4 +158,23 @@ for i in range(3):
     time.sleep(1.1); (new / "n.md").write_text(str(i)); core.backup_vault(str(new))
 check(len(core.list_backups("Dan Notes")) == 2, "old backups pruned")
 
+# Deadlock Auto Config: a folder of scripts, copied in with its files, mods and patches
+dl = tmp / "home" / "Desktop" / "Deadlock config files" / "Deadlock Auto Config"
+(dl / "mods").mkdir(parents=True); (dl / "patches").mkdir(); (dl / "scripts").mkdir()
+for f in ("Apply Deadlock Settings.bat", "Save My Current In-Game Settings.bat", "Change Aspect Ratio.bat", "README.txt"):
+    (dl / f).write_text("@echo off")
+(dl / "mods" / "pak05_dir.vpk - daylock").write_bytes(b"v"); (dl / "patches" / "convars.txt").write_text("c")
+st = core.load_state()
+c = [a for a, _ in core.import_candidates(st)]
+check([a.id for a in c] == ["deadlock-config"], "Deadlock Auto Config found on the Desktop")
+dla = c[0]; core.import_app(dla, dl)
+check(dla.installed and (dla.dir / "mods" / "pak05_dir.vpk - daylock").exists() and (dla.dir / "patches" / "convars.txt").exists(),
+      "scripts, mods and patches copied in")
+check(dla.kind == "script" and dla.play_label == "Apply settings" and len(dla.actions) == 2, "Apply is the main button, two more on the menu")
+try:
+    core.run_script(dla, "missing.bat"); check(False, "missing script should fail")
+except RuntimeError:
+    check(True, "missing script reported")
+check("README" in core.change_brief(dla, ""), "change brief for scripts")
+
 print(f"all {ok} checks passed")

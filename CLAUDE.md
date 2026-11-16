@@ -26,6 +26,12 @@ opens, shows and updates them. Owner: GitHub `Danielb1606`. Repo: `Danielb1606/D
 - **Daniels Assignment** (`daniels-assignment`): one-file PyInstaller exe from `Danielb1606/DanielsAssignment`
   releases; self-updates. Installed version is found by matching the exe size to release asset sizes.
   Imported from `Desktop\GamingProgram`.
+- **Deadlock Auto Config** (`deadlock-config`, kind `script`): Dan's PowerShell tool (from an Oct 2026 chat) that
+  re-applies his Deadlock settings and mods after patches: patch-safe merges into gameinfo.gi and video.txt
+  (video.txt lives in Steam\userdata\<id>\1422450\local\cfg), mods/ copied to game\citadel\Addons as pakNN_dir.vpk.
+  Imported from Desktop\Deadlock config files\Deadlock Auto Config (scripts\, files\, patches\, mods\, backups\).
+  Main button = Apply Deadlock Settings.bat; menu: Save My Current In-Game Settings, Change Aspect Ratio,
+  Open mods folder. .bat files run in their own console (they pause at the end). No repo, no updates.
 - **Obsidian** (`obsidian`, kind `external`): Dan's notes. Linked, NOT copied (it has its own installer and
   updater); found at %LOCALAPPDATA%\Programs\Obsidian\Obsidian.exe (hidden if not installed). Launched as the
   normal user via explorer.exe (admin breaks obsidian:// links / drag-drop). Vaults read from
@@ -63,6 +69,7 @@ Run `python tests/test_core.py` first.
 
 ## History
 - 1.0.0 - first version.
+- 1.3.0 - Deadlock Auto Config tile; cards no longer cut off by the scrollbar.
 - 1.2.0 - notes in the Workshop, automatic notes backups, restore, Install Obsidian.
 - 1.1.0 - Obsidian tile.
 - 1.0.1 - sharper, bolder toolbox icon (each size drawn separately by make_icon.py; window uses iconphoto with all sizes).

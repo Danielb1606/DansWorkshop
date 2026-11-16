@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 APP_NAME = "Dan's Workshop"
 EXE_NAME = "Dan's Workshop.exe"
 HUB_REPO = "Danielb1606/DansWorkshop"
@@ -157,6 +157,9 @@ class AppDef:
     colour: str = "#2a2f38"
     blurb: str = ""
     external: List[str] = field(default_factory=list)   # installed elsewhere: possible exe paths (linked, not copied)
+    play_label: str = "Play"
+    initials: str = ""
+    actions: List[Tuple[str, str]] = field(default_factory=list)   # extra (label, file) on the card menu
 
     @property
     def dir(self) -> Path:
@@ -201,6 +204,13 @@ BUILTIN = [
         import_from=r"%USERPROFILE%\Desktop\GamingProgram",
         import_skip=["*.old.exe", "*.new.exe", "*.failed.exe", "*-report-*.zip"],
         colour="#26364a", blurb="Flask automation for the PoE-style UI."),
+    AppDef(
+        id="deadlock-config", name="Deadlock Auto Config", folder="Deadlock Auto Config",
+        exe="Apply Deadlock Settings.bat", kind="script", play_label="Apply settings", initials="DL",
+        actions=[("Save my current in-game settings", "Save My Current In-Game Settings.bat"),
+                 ("Change aspect ratio", "Change Aspect Ratio.bat")],
+        import_from=r"%USERPROFILE%\Desktop\Deadlock config files\Deadlock Auto Config",
+        colour="#3a2a22", blurb="Puts your Deadlock settings and mods back after a patch."),
     AppDef(
         id="obsidian", name="Obsidian", folder="", exe="Obsidian.exe", kind="external",
         external=[r"%LOCALAPPDATA%\Programs\Obsidian\Obsidian.exe", r"%PROGRAMFILES%\Obsidian\Obsidian.exe",
@@ -563,11 +573,24 @@ def launch(app: AppDef, vault: str = ""):
     if app.external:
         launch_as_user(obsidian_link(vault_path(vault)) if vault else str(app.exe_path))
         return None
+    if app.kind == "script":
+        return run_script(app, app.exe)
     flags = 0
     if IS_WIN:
         flags = 0x00000008 | 0x00000200            # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
     return subprocess.Popen([str(app.exe_path)], cwd=str(app.dir), env=launch_env(app),
                             creationflags=flags, close_fds=True)
+
+
+def run_script(app: AppDef, file: str) -> subprocess.Popen:
+    """Run one of a script app's .bat files in its own console window (it shows
+    what it did and waits for a key, like double-clicking it)."""
+    path = app.dir / file
+    if not path.is_file():
+        raise RuntimeError(f"{file} is missing from {app.dir}")
+    flags = 0x00000010 if IS_WIN else 0                  # CREATE_NEW_CONSOLE
+    return subprocess.Popen(["cmd", "/c", str(path)] if IS_WIN else ["sh", str(path)], cwd=str(app.dir),
+                            env=clean_env(), creationflags=flags)
 
 
 def launch_as_user(target: str) -> None:
@@ -795,6 +818,8 @@ def change_brief(app: AppDef, version: str) -> str:
     lines = [f"I'd like a change to my app \"{app.name}\" (it's one of the apps in Dan's Workshop)."]
     if app.repo:
         lines.append(f"Code: https://github.com/{app.repo} - read CLAUDE.md there first, it has everything about the app.")
+    elif app.kind == "script":
+        lines.append("It's a set of scripts (no repo): they're in the folder below - README.txt explains them.")
     lines.append(f"Installed version: {version or 'unknown'}")
     lines.append(f"Folder on my PC: {app.dir}")
     lines.append("")
@@ -1169,7 +1194,7 @@ class Checker:
         def work():
             res, errs, rels = {}, {}, {}
             for app in apps:
-                if app.kind in ("custom", "external"):
+                if app.kind in ("custom", "external", "script"):
                     continue
                 try:
                     if app.kind == "github-exe":
