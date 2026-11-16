@@ -1,42 +1,52 @@
-"""Draws the toolbox icon (assets/icon.png, assets/icon.ico).
-Each size is drawn separately (at 8x, then shrunk) so small sizes stay crisp.
-Taskbar sizes (48 px and under) leave out the dark tile behind the toolbox so the
-toolbox fills the space like other taskbar icons."""
+"""Draws the Workshop icon: a gold toolbox on a dark tile with a gold edge.
+Every size is drawn on its own with all straight edges snapped to whole pixels,
+so it stays razor sharp at taskbar sizes (16-48 px)."""
 from PIL import Image, ImageDraw
 
-GOLD, LIGHT, DARK, BG = "#d4a84b", "#f3dc9a", "#1b1d21", "#1b1d21"
+GOLD, LIGHT, DARK = "#d4a84b", "#f3dc9a", "#1b1d21"
+Q = 8          # draw at 8x, then shrink: snapped edges stay crisp, only curves get smoothing
 
 
-def toolbox(d, k, ox, oy, small, outline):
-    def R(x0, y0, x1, y1):
-        return (ox + x0 * k, oy + y0 * k, ox + x1 * k, oy + y1 * k)
-    if outline:      # thin dark edge so it reads on light and dark taskbars
-        d.rounded_rectangle(R(-6, 66, 262, 238), radius=int(28 * k), fill=DARK)
-        d.rounded_rectangle(R(66, -6, 190, 100), radius=int(34 * k), fill=DARK)
-    d.rounded_rectangle(R(78, 6, 178, 96), radius=int(26 * k), outline=GOLD, width=int((30 if small else 22) * k))
-    d.rounded_rectangle(R(4, 78, 252, 228), radius=int(24 * k), fill=GOLD)
-    d.rectangle(R(4, 128, 252, 146 if small else 140), fill=DARK)
-    d.rounded_rectangle(R(100, 106, 156, 166), radius=int(9 * k), fill=LIGHT)
-    if not small:
-        d.rounded_rectangle(R(114, 120, 142, 152), radius=int(5 * k), fill=GOLD)
-
-
-def draw(size: int, plate: bool) -> Image.Image:
-    S = size * 8
+def draw(n: int) -> Image.Image:
+    S = n * Q
     im = Image.new("RGBA", (S, S), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
-    if plate:
-        d.rounded_rectangle((0, 0, S - 1, S - 1), radius=int(52 * S / 256), fill=BG)
-        k = S / 256 * 0.84
-        toolbox(d, k, S * 0.08, S * 0.11, size <= 24, False)
-    else:
-        k = S * 0.98 / 268                       # artwork spans -6..262 wide, -6..238 tall
-        toolbox(d, k, (S - 268 * k) / 2 + 6 * k, (S - 244 * k) / 2 + 6 * k, size <= 24, True)
-    return im.resize((size, size), Image.LANCZOS)
+    P = lambda *v: tuple(int(round(x)) * Q for x in v)          # whole pixels -> 8x canvas
+    bw = max(1, round(n / 12))                                   # gold edge: 2 px at 24
+    r = max(2, round(n * 0.2))
+    d.rounded_rectangle(P(0, 0, n, n), radius=r * Q, fill=GOLD)
+    d.rounded_rectangle(P(bw, bw, n - bw, n - bw), radius=max(1, r - bw) * Q, fill=DARK)
+    pad = max(1, round(n / 14))
+    m = bw + pad
+    W = n - 2 * m                                                # toolbox width
+    H = round(W * 0.86)
+    x0, y0 = m, m + (n - 2 * m - H) // 2 + (1 if n <= 20 else 0)
+    t = max(1, round(n / 14))                                    # handle thickness
+    hw, hh = round(W * 0.44), round(H * 0.34)
+    hx = x0 + (W - hw) // 2
+    body_top = y0 + hh - t
+    rb = max(1, round(n * 0.06))
+    # handle
+    d.rounded_rectangle(P(hx, y0, hx + hw, y0 + hh + t), radius=max(1, round(hw * 0.3)) * Q, fill=GOLD)
+    d.rectangle(P(hx + t, y0 + t, hx + hw - t, y0 + hh + t), fill=DARK)
+    # body
+    d.rounded_rectangle(P(x0, body_top, x0 + W, y0 + H), radius=rb * Q, fill=GOLD)
+    bh = y0 + H - body_top
+    lid = body_top + round(bh * 0.34)
+    lt = max(1, round(n / 24))
+    d.rectangle(P(x0, lid, x0 + W, lid + lt), fill=DARK)
+    # latch
+    lw_, lh = max(2, round(W * 0.2)), max(2, round(bh * 0.36))
+    lx, ly = x0 + (W - lw_) // 2, lid + lt // 2 - lh // 2
+    d.rectangle(P(lx, ly, lx + lw_, ly + lh), fill=LIGHT)
+    if n >= 32:
+        k = max(1, round(lw_ * 0.3))
+        d.rectangle(P(lx + k, ly + k, lx + lw_ - k, ly + lh - k), fill=GOLD)
+    return im.resize((n, n), Image.LANCZOS)
 
 
-sizes = [16, 20, 24, 32, 40, 48, 64, 128, 256]
-imgs = {s: draw(s, plate=s > 48) for s in sizes}
+sizes = [16, 20, 24, 30, 32, 36, 40, 48, 64, 128, 256]
+imgs = {s: draw(s) for s in sizes}
 imgs[256].save("assets/icon.png")
 for s in (16, 32, 48):
     imgs[s].save(f"assets/icon{s}.png")

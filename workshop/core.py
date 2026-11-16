@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
-__version__ = "1.3.5"
+__version__ = "1.3.6"
 APP_NAME = "Dan's Workshop"
 EXE_NAME = "Dan's Workshop.exe"
 HUB_REPO = "Danielb1606/DansWorkshop"
@@ -1172,7 +1172,7 @@ def desktop_dir() -> Path:
     return home() / "Desktop"
 
 
-ICON_REV = 3          # bump when the Workshop's icon changes: shortcuts and Windows' icon cache get refreshed
+ICON_REV = 4          # bump when the Workshop's icon changes: shortcuts and Windows' icon cache get refreshed
 
 
 def pinned_shortcut() -> Path:
