@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
-__version__ = "1.3.6"
+__version__ = "1.3.7"
 APP_NAME = "Dan's Workshop"
 EXE_NAME = "Dan's Workshop.exe"
 HUB_REPO = "Danielb1606/DansWorkshop"
@@ -246,7 +246,10 @@ def save_state(st: dict) -> None:
 
 def all_apps(state: Optional[dict] = None) -> List[AppDef]:
     state = state if state is not None else load_state()
+    import dataclasses
     apps = [a for a in BUILTIN if not a.external or a.installed or (a.id == "obsidian" and workshop_vaults())]
+    # names you chose yourself (Rename on a tile's menu)
+    apps = [dataclasses.replace(a, name=state["apps"].get(a.id, {}).get("name") or a.name) for a in apps]
     for c in state.get("custom", []):
         try:
             apps.append(AppDef(id=c["id"], name=c["name"], folder=c["folder"], exe=c["exe"],
@@ -541,6 +544,23 @@ def add_custom_app(name: str, exe: Path, copy_in: bool, state: dict) -> AppDef:
     state["custom"].append(rec)
     save_state(state)
     return next(a for a in all_apps(state) if a.id == app_id)
+
+
+def rename_app(app_id: str, name: str, state: dict) -> None:
+    """Show a tile under your own name (empty = back to its normal name)."""
+    name = name.strip()
+    for c in state.get("custom", []):
+        if c.get("id") == app_id:
+            if name:
+                c["name"] = name
+            save_state(state)
+            return
+    st = state["apps"].setdefault(app_id, {})
+    if name:
+        st["name"] = name
+    else:
+        st.pop("name", None)
+    save_state(state)
 
 
 def remove_custom_app(app_id: str, state: dict) -> None:

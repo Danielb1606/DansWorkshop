@@ -253,6 +253,8 @@ class Card(tk.Frame):
         st = core.app_state(self.hub.state, self.app.id)
         p = core.art_path(self.app)
         icon = None if st.get("custom_art") else self.hub.app_icon(self.app)
+        if st.get("custom_art") and p and self.hub.squareish(p):
+            icon = p                                    # a square picture you chose: show it whole, like an icon
         if icon:
             img = self.hub.icon_image(self.app, icon, self.w, self.h)
         else:
@@ -701,6 +703,14 @@ class Hub:
         self._icons[app.id] = (p, now)
         return p
 
+    def squareish(self, path) -> bool:
+        try:
+            from PIL import Image
+            with Image.open(path) as im:
+                return max(im.size) / max(1, min(im.size)) < 1.4
+        except Exception:
+            return False
+
     def icon_image(self, app, path, w, h):
         """The app's own icon, centred on its colour; scaled up and sharpened when it's small."""
         try:
@@ -983,6 +993,11 @@ class Hub:
 
     def card_menu(self, app, x, y):
         m = self.menu()
+        m.add_command(label="Rename…", command=lambda: self.rename(app))
+        m.add_command(label="Change picture…", command=lambda: self.change_picture(app))
+        if core.app_state(self.state, app.id).get("custom_art"):
+            m.add_command(label="Use its own picture again", command=lambda: self.retake(app))
+        m.add_separator()
         if app.id == "obsidian" and app.installed:
             self._obsidian_menu(m, app)
             m.tk_popup(x, y)
@@ -996,9 +1011,8 @@ class Hub:
         if app.installed:
             m.add_command(label="Open folder", command=lambda: core.open_folder(app.dir))
             m.add_command(label="Request a change…", command=lambda: self.request_change(app))
-            m.add_separator()
-            m.add_command(label="Change picture…", command=lambda: self.change_picture(app))
-            m.add_command(label="Use its icon again" if (app.icon or self._icons.get(app.id, (None,))[0]) else "Retake picture next time it's open", command=lambda: self.retake(app))
+            if not (app.icon or self._icons.get(app.id, (None,))[0]):
+                m.add_command(label="Retake picture next time it's open", command=lambda: self.retake(app))
         else:
             m.add_command(label="Add from a folder…", command=lambda: self.add_from_folder(app))
         if app.kind == "custom":
@@ -1281,9 +1295,6 @@ class Hub:
                 rs.add_cascade(label=n, menu=zs)
             m.add_cascade(label="Restore a backup", menu=rs)
             m.add_command(label="Open backups folder", command=lambda: core.open_folder(core.BACKUP_DIR))
-        m.add_separator()
-        m.add_command(label="Change picture…", command=lambda: self.change_picture(app))
-        m.add_command(label="Use its icon again", command=lambda: self.retake(app))
 
     def _set_vault(self, app, stored):
         core.app_state(self.state, app.id)["vault"] = stored
@@ -1435,9 +1446,20 @@ class Hub:
         webbrowser.open("https://claude.ai/new")
         self.say(f"A brief about {app.name} is copied. Paste it into Claude (Ctrl+V) and add the change you want.", "good")
 
+    def rename(self, app):
+        from tkinter import simpledialog
+        default = next((a.name for a in core.BUILTIN if a.id == app.id), app.name)
+        new = simpledialog.askstring(core.APP_NAME, f"New name for \u201c{app.name}\u201d\n(leave empty to go back to "
+                                     f"\u201c{default}\u201d):", initialvalue=app.name, parent=self.root)
+        if new is None:
+            return
+        core.rename_app(app.id, new, self.state)
+        self.fill_grid(force=True)
+
     def change_picture(self, app):
-        path = filedialog.askopenfilename(parent=self.root, title="Pick a picture",
-                                          filetypes=[("Pictures", "*.png *.jpg *.jpeg *.bmp"), ("All files", "*.*")])
+        path = filedialog.askopenfilename(parent=self.root, title=f"Pick a picture for {app.name}",
+                                          filetypes=[("Pictures", "*.png *.jpg *.jpeg *.bmp *.gif *.webp *.ico"),
+                                                     ("All files", "*.*")])
         if not path:
             return
         try:

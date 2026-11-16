@@ -75,6 +75,8 @@ Run `python tests/test_core.py` first.
 
 ## History
 - 1.0.0 - first version.
+- 1.3.7 - Rename… and Change picture… at the top of every tile's ⋯ menu (state apps[id].name; empty = default);
+  square custom pictures show whole like icons; 'Use its own picture again' resets.
 - 1.3.6 - icon = design B: gold toolbox on a dark tile with a gold edge, NO glow (Dan's pick); each size drawn
   separately with straight edges snapped to whole pixels for maximum sharpness (make_icon.py).
 - 1.3.5 - real taskbar fix: window icons set with WM_SETICON from the .ico at the DPI's SM_CXICON/SM_CXSMICON

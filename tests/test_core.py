@@ -209,4 +209,12 @@ if real.exists():
 da2 = next(a for a in core.BUILTIN if a.id == "daniels-assignment")
 check(core.app_icon(da2) is not None, "Daniels Assignment uses its flask icon")
 
+# renaming tiles
+st = core.load_state()
+core.rename_app("poker-trainer", "Poker Coach", st)
+check(next(a for a in core.all_apps(core.load_state()) if a.id == "poker-trainer").name == "Poker Coach", "tile renamed")
+check(next(a for a in core.BUILTIN if a.id == "poker-trainer").name == "Poker Trainer", "built-in name untouched")
+core.rename_app("poker-trainer", "", core.load_state())
+check(next(a for a in core.all_apps(core.load_state()) if a.id == "poker-trainer").name == "Poker Trainer", "rename reset")
+
 print(f"all {ok} checks passed")
