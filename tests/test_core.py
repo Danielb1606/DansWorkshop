@@ -124,4 +124,38 @@ v = core.obsidian_vaults()
 check([x["path"] for x in v] == [r"C:\Notes\Dan Notes", r"C:\Old Vault"], "vaults listed, newest first")
 check(core.obsidian_link(r"C:\Notes\Dan Notes") == "obsidian://open?path=C%3A%5CNotes%5CDan%20Notes", "vault link")
 
+# notes: move a vault into the Workshop, Obsidian follows, backups and restore
+vault = tmp / "home" / "Documents" / "Dan Notes"
+(vault / ".obsidian" / "plugins" / "calendar").mkdir(parents=True)
+(vault / ".obsidian" / "plugins" / "calendar" / "data.json").write_text("{}")
+(vault / "Daily").mkdir(); (vault / "Daily" / "Monday.md").write_text("hello")
+(vault / ".trash").mkdir(); (vault / ".trash" / "old.md").write_text("x")
+(cfgdir / "obsidian.json").write_text(json.dumps({"vaults": {"abc": {"path": str(vault), "ts": 9, "open": True}}}))
+check(core.vault_warnings(str(vault)) == [], "no warnings for a plain vault")
+check(core.vault_warnings(r"C:\Users\Dan\OneDrive\Notes"), "OneDrive vault warns")
+new = core.move_vault_in(str(vault))
+check(new == core.NOTES_DIR / "Dan Notes" and (new / "Daily" / "Monday.md").read_text() == "hello", "vault copied in")
+check((new / ".obsidian" / "plugins" / "calendar" / "data.json").exists(), "plugins and settings came along")
+check(not (new / ".trash").exists() and (vault / "Daily" / "Monday.md").exists(), "trash skipped, original kept")
+oj = json.loads((cfgdir / "obsidian.json").read_text())["vaults"]
+check(list(oj) == ["abc"] and oj["abc"]["path"] == str(new) and oj["abc"]["open"], "Obsidian now points at the Workshop copy")
+check(core.stored_vault(str(new)) == "workshop:Dan Notes" and core.vault_path("workshop:Dan Notes") == str(new), "stored relative to the Workshop")
+# another PC: Obsidian doesn't know the vault yet
+(cfgdir / "obsidian.json").write_text(json.dumps({"vaults": {}}))
+check(core.register_workshop_vaults() == 1 and core.register_workshop_vaults() == 0, "vault registered once on a new PC")
+# backups: made, skipped when unchanged, restored with the current version kept
+z1 = core.backup_vault(str(new))
+check(z1 is not None and z1.exists(), "backup made")
+check(core.backup_vault(str(new)) is None, "no backup when nothing changed")
+time.sleep(1.1); (new / "Daily" / "Monday.md").write_text("changed")
+z2 = core.backup_vault(str(new))
+check(z2 is not None and len(core.list_backups("Dan Notes")) == 2, "new backup after a change")
+core.restore_backup(z1, str(new))
+check((new / "Daily" / "Monday.md").read_text() == "hello", "restored the older version")
+check(any("before restore" in p.name for p in core.NOTES_DIR.iterdir()), "current version kept before restoring")
+core.KEEP_BACKUPS = 2
+for i in range(3):
+    time.sleep(1.1); (new / "n.md").write_text(str(i)); core.backup_vault(str(new))
+check(len(core.list_backups("Dan Notes")) == 2, "old backups pruned")
+
 print(f"all {ok} checks passed")

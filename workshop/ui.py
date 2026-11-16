@@ -245,7 +245,7 @@ class Card(tk.Frame):
         if ver:
             bits.append(f"v{ver}")
         if not a.installed:
-            bits.append("not in the Workshop yet")
+            bits.append("not installed on this PC" if a.external else "not in the Workshop yet")
         elif st.get("last_opened"):
             bits.append(f"opened {core.ago(st['last_opened'])}")
         else:
@@ -256,7 +256,8 @@ class Card(tk.Frame):
         elif upd:
             self._pill(f"Update v{upd.version}", ACCENT)
         if not a.installed:
-            self.btn.set("Bring it in" if a.import_from else "Install", "outline")
+            self.btn.set("Install Obsidian" if a.id == "obsidian" else ("Bring it in" if a.import_from else "Install"),
+                         "outline")
         elif running:
             self.btn.set("Show window", "plain")
         elif upd and a.kind not in ("custom", "external"):
@@ -814,24 +815,7 @@ class Hub:
     def card_menu(self, app, x, y):
         m = self.menu()
         if app.id == "obsidian" and app.installed:
-            vaults = core.obsidian_vaults()
-            default = core.app_state(self.state, app.id).get("vault", "")
-            if vaults:
-                sub = tk.Menu(m, tearoff=0, bg=CARD, fg=TEXT, activebackground=RAISED, activeforeground=TEXT, font=FONT)
-                for v in vaults:
-                    sub.add_command(label=v["name"], command=lambda p=v["path"]: self.play(app, p))
-                m.add_cascade(label="Open vault", menu=sub)
-                pick = tk.Menu(m, tearoff=0, bg=CARD, fg=TEXT, activebackground=RAISED, activeforeground=TEXT, font=FONT)
-                pick.add_command(label=("✓ " if not default else "   ") + "Whatever was open last", command=lambda: self._set_vault(app, ""))
-                for v in vaults:
-                    pick.add_command(label=("✓ " if default == v["path"] else "   ") + v["name"],
-                                     command=lambda p=v["path"]: self._set_vault(app, p))
-                m.add_cascade(label="Play opens…", menu=pick)
-                if default:
-                    m.add_command(label="Open the notes folder", command=lambda: core.open_folder(Path(default)))
-            m.add_separator()
-            m.add_command(label="Change picture…", command=lambda: self.change_picture(app))
-            m.add_command(label="Retake picture next time it's open", command=lambda: self.retake(app))
+            self._obsidian_menu(m, app)
             m.tk_popup(x, y)
             return
         if app.installed:
@@ -851,6 +835,9 @@ class Hub:
 
     def primary(self, app):
         if self.busy.get(app.id):
+            return
+        if not app.installed and app.id == "obsidian":
+            self.install_obsidian()
             return
         if not app.installed:
             if core.expand(app.import_from).joinpath(app.exe).is_file():
@@ -1060,11 +1047,186 @@ class Hub:
         threading.Thread(target=work, daemon=True).start()
         self._import_progress()
 
-    def _set_vault(self, app, path):
-        core.app_state(self.state, app.id)["vault"] = path
+    # ------------------------------------------------------------------ Obsidian
+
+    def _submenu(self, m):
+        return tk.Menu(m, tearoff=0, bg=CARD, fg=TEXT, activebackground=RAISED, activeforeground=TEXT, font=FONT)
+
+    def _obsidian_menu(self, m, app):
+        vaults = core.obsidian_vaults()
+        default = core.app_state(self.state, app.id).get("vault", "")
+        inside = {os.path.normcase(str(v)) for v in core.workshop_vaults()}
+        if vaults:
+            sub = self._submenu(m)
+            for v in vaults:
+                tag = "  (in the Workshop)" if os.path.normcase(v["path"]) in inside else ""
+                sub.add_command(label=v["name"] + tag, command=lambda p=v["path"]: self.play(app, core.stored_vault(p)))
+            m.add_cascade(label="Open vault", menu=sub)
+            pick = self._submenu(m)
+            pick.add_command(label=("✓ " if not default else "   ") + "Whatever was open last",
+                             command=lambda: self._set_vault(app, ""))
+            for v in vaults:
+                st = core.stored_vault(v["path"])
+                pick.add_command(label=("✓ " if default == st else "   ") + v["name"],
+                                 command=lambda st=st: self._set_vault(app, st))
+            m.add_cascade(label="Play opens…", menu=pick)
+            if default:
+                m.add_command(label="Open the notes folder",
+                              command=lambda: core.open_folder(Path(core.vault_path(default))))
+        m.add_separator()
+        outside = [v for v in vaults if os.path.normcase(v["path"]) not in inside]
+        if outside:
+            mv = self._submenu(m)
+            for v in outside:
+                mv.add_command(label=v["name"], command=lambda v=v: self.move_vault(app, v))
+            m.add_cascade(label="Move a vault into the Workshop", menu=mv)
+        m.add_command(label="Back up notes now", command=lambda: self.backup_notes(force=True))
+        names = sorted({p.name for p in core.BACKUP_DIR.iterdir() if p.is_dir()}) if core.BACKUP_DIR.is_dir() else []
+        if names:
+            rs = self._submenu(m)
+            for n in names:
+                zs = self._submenu(rs)
+                for z in core.list_backups(n)[:15]:
+                    when = time.strftime("%d %b %Y, ", time.localtime(z.stat().st_mtime)) + core.nice_time(z.stat().st_mtime)
+                    zs.add_command(label=when, command=lambda z=z, n=n: self.restore_notes(app, z, n))
+                rs.add_cascade(label=n, menu=zs)
+            m.add_cascade(label="Restore a backup", menu=rs)
+            m.add_command(label="Open backups folder", command=lambda: core.open_folder(core.BACKUP_DIR))
+        m.add_separator()
+        m.add_command(label="Change picture…", command=lambda: self.change_picture(app))
+        m.add_command(label="Retake picture next time it's open", command=lambda: self.retake(app))
+
+    def _set_vault(self, app, stored):
+        core.app_state(self.state, app.id)["vault"] = stored
         core.save_state(self.state)
-        name = Path(path).name if path else "whatever vault was open last"
+        name = Path(core.vault_path(stored)).name if stored else "whatever vault was open last"
         self.say(f"Play on Obsidian now opens {name}.", "good")
+
+    def _obsidian_open(self) -> bool:
+        ob = next((a for a in core.all_apps(self.state) if a.id == "obsidian"), None)
+        return bool(ob and core.pids_for(ob, core.running_pids()))
+
+    def move_vault(self, app, v):
+        if self._obsidian_open():
+            messagebox.showinfo(core.APP_NAME, "Close Obsidian first, then try again.", parent=self.root)
+            return
+        warn = core.vault_warnings(v["path"])
+        text = (f"Move \u201c{v['name']}\u201d into the Workshop?\n\nIt's copied to {core.NOTES_DIR / v['name']} and Obsidian "
+                f"opens it from there. The original folder stays where it is as a backup.")
+        if warn:
+            text += ("\n\nCareful: " + "; ".join(warn) + ". Moving it means that stops for this copy. "
+                     "Only carry on if that's what you want.")
+        if not messagebox.askyesno(core.APP_NAME, text, icon="warning" if warn else "question", parent=self.root):
+            return
+        self.busy["import"] = f"Moving {v['name']} into the Workshop…"
+        self.paint_banners()
+
+        def work():
+            try:
+                def prog(f, name):
+                    self.busy["import"] = f"Moving {v['name']} into the Workshop…  {round(f * 100)}%"
+                new = core.move_vault_in(v["path"], prog)
+                self.root.after(0, lambda: self._vault_moved(app, v, new, None))
+            except Exception as e:
+                self.root.after(0, lambda: self._vault_moved(app, v, None, str(e)))
+
+        threading.Thread(target=work, daemon=True).start()
+        self._import_progress()
+
+    def _vault_moved(self, app, v, new, err):
+        self.busy.pop("import", None)
+        if err:
+            self.say(f"{v['name']} wasn't moved: {err}", "bad")
+            return
+        st = core.app_state(self.state, app.id)
+        if not st.get("vault") or core.vault_path(st["vault"]) == v["path"]:
+            st["vault"] = core.stored_vault(str(new))
+        core.save_state(self.state)
+        core.log_activity("Obsidian", f"vault {v['name']} moved into the Workshop")
+        self.say(f"{v['name']} now lives in the Workshop ({new}) and Obsidian opens it from there. "
+                 f"The old folder ({v['path']}) is untouched - delete it once you're happy.", "good")
+        self.backup_notes()
+
+    def _vaults_to_back_up(self) -> List[str]:
+        out = [str(v) for v in core.workshop_vaults()]
+        default = core.app_state(self.state, "obsidian").get("vault", "")
+        if default and core.vault_path(default) not in out and Path(core.vault_path(default)).is_dir():
+            out.append(core.vault_path(default))
+        return out
+
+    def backup_notes(self, force=False):
+        vaults = self._vaults_to_back_up()
+        if not vaults:
+            if force:
+                self.say("Nothing to back up yet: move a vault into the Workshop, or pick which vault Play opens.", "bad")
+            return
+
+        def work():
+            made, errs = [], []
+            for v in vaults:
+                try:
+                    z = core.backup_vault(v, force=force)
+                    if z:
+                        made.append(Path(v).name)
+                except Exception as e:
+                    errs.append(f"{Path(v).name}: {e}")
+            def done():
+                if made:
+                    core.log_activity("Obsidian", "notes backed up (" + ", ".join(made) + ")")
+                    if force:
+                        self.say("Notes backed up: " + ", ".join(made) + ".", "good")
+                elif force and not errs:
+                    self.say("Notes backed up.", "good")
+                if errs:
+                    self.say("A notes backup didn't finish: " + "; ".join(errs), "bad")
+            self.root.after(0, done)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def restore_notes(self, app, zip_path, name):
+        if self._obsidian_open():
+            messagebox.showinfo(core.APP_NAME, "Close Obsidian first, then try again.", parent=self.root)
+            return
+        target = core.NOTES_DIR / name
+        if not target.exists():
+            match = [v["path"] for v in core.obsidian_vaults() if v["name"] == name]
+            target = Path(match[0]) if match else target
+        when = time.strftime("%d %b %Y %H:%M", time.localtime(zip_path.stat().st_mtime))
+        if not messagebox.askyesno(core.APP_NAME, f"Put {name} back to how it was on {when}?\n\nThe current version "
+                                   "is kept next to it (renamed \u201cbefore restore\u201d), so nothing is lost.",
+                                   parent=self.root):
+            return
+        try:
+            core.restore_backup(zip_path, str(target))
+            core.register_workshop_vaults()
+        except Exception as e:
+            self.say(f"Couldn't restore {name}: {e}", "bad")
+            return
+        core.log_activity("Obsidian", f"vault {name} restored from {when}")
+        self.say(f"{name} is back to how it was on {when}.", "good")
+
+    def install_obsidian(self):
+        if "obsidian" in self.busy:
+            return
+        self.busy["obsidian"] = "Downloading…"
+        self.say("Downloading Obsidian's installer…", "accent")
+
+        def work():
+            try:
+                info = core.obsidian_installer()
+                if not info:
+                    raise RuntimeError("couldn't find the installer")
+                dest = core.DATA_DIR / "downloads" / info.url.rsplit("/", 1)[-1]
+                core.download(info.url, dest, info.size)
+                core.launch_as_user(str(dest))
+                msg, tone = ("Obsidian's installer is open: click through it, then press Play. Your notes in the "
+                             "Workshop are added to Obsidian automatically."), "good"
+            except Exception as e:
+                msg, tone = f"Couldn't get Obsidian's installer: {e}", "bad"
+            self.root.after(0, lambda: (self.busy.pop("obsidian", None), self._drop_msg("Downloading Obsidian's installer…"),
+                                        self.say(msg, tone), self.refresh_cards()))
+
+        threading.Thread(target=work, daemon=True).start()
 
     def add_app(self):
         AddAppDialog(self)
@@ -1123,7 +1285,17 @@ class Hub:
 
     # ------------------------------------------------------------------ background
 
+    def _register_vaults(self):
+        try:
+            if core.workshop_vaults() and not self._obsidian_open():
+                n = core.register_workshop_vaults()
+                if n:
+                    self.say(f"Added {n} vault{'s' if n > 1 else ''} from the Workshop to Obsidian.", "good")
+        except Exception:
+            pass
+
     def first_steps(self):
+        self._register_vaults()
         if self.settings.get("check_on_open", True):
             self.check_updates(quiet=True)
         if getattr(sys, "frozen", False) and core.IS_WIN and core.is_admin():
@@ -1181,6 +1353,9 @@ class Hub:
                 if now and not (app.id in self.started_at and time.time() - self.started_at[app.id] < 10):
                     core.app_state(self.state, app.id)["last_opened"] = time.time()
                     core.log_activity(app.name, "opened")
+                if app.id == "obsidian" and was and not now:
+                    self.backup_notes()                       # Obsidian just closed: back up the notes
+                    self._register_vaults()
             # an app that updated itself (both apps can) shows up as a new version
             if app.installed:
                 st = core.app_state(self.state, app.id)

@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 APP_NAME = "Dan's Workshop"
 EXE_NAME = "Dan's Workshop.exe"
 HUB_REPO = "Danielb1606/DansWorkshop"
@@ -51,14 +51,17 @@ APPS_DIR = BASE / "apps"
 DATA_DIR = BASE / "workshop_data"
 ART_DIR = DATA_DIR / "art"
 ASSETS = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent)) / "assets"
+NOTES_DIR = BASE / "notes"
+BACKUP_DIR = BASE / "backups" / "Obsidian"
 
 
 def set_base(path: Path) -> None:
     """Point everything at another Workshop folder (used by the tests)."""
-    global BASE, APPS_DIR, DATA_DIR, ART_DIR
+    global BASE, APPS_DIR, DATA_DIR, ART_DIR, NOTES_DIR, BACKUP_DIR
     BASE = Path(path)
     APPS_DIR, DATA_DIR = BASE / "apps", BASE / "workshop_data"
     ART_DIR = DATA_DIR / "art"
+    NOTES_DIR, BACKUP_DIR = BASE / "notes", BASE / "backups" / "Obsidian"
 
 
 def home() -> Path:
@@ -231,7 +234,7 @@ def save_state(st: dict) -> None:
 
 def all_apps(state: Optional[dict] = None) -> List[AppDef]:
     state = state if state is not None else load_state()
-    apps = [a for a in BUILTIN if not a.external or a.installed]
+    apps = [a for a in BUILTIN if not a.external or a.installed or (a.id == "obsidian" and workshop_vaults())]
     for c in state.get("custom", []):
         try:
             apps.append(AppDef(id=c["id"], name=c["name"], folder=c["folder"], exe=c["exe"],
@@ -558,7 +561,7 @@ def launch(app: AppDef, vault: str = ""):
     if not app.installed:
         raise RuntimeError(f"{app.name} isn't installed")
     if app.external:
-        launch_as_user(obsidian_link(vault) if vault else str(app.exe_path))
+        launch_as_user(obsidian_link(vault_path(vault)) if vault else str(app.exe_path))
         return None
     flags = 0
     if IS_WIN:
@@ -585,6 +588,193 @@ def obsidian_vaults() -> List[dict]:
         if p:
             out.append({"name": Path(p).name, "path": p, "open": bool(v.get("open")), "ts": v.get("ts", 0)})
     return sorted(out, key=lambda v: -v["ts"])
+
+
+# ----------------------------------------------------------------------------- Obsidian notes in the Workshop
+
+OBSIDIAN_JSON = lambda: appdata() / "obsidian" / "obsidian.json"
+KEEP_BACKUPS = 20
+WS_PREFIX = "workshop:"          # vault paths stored relative to the Workshop, so they survive moving PC
+
+
+def workshop_vaults() -> List[Path]:
+    if not NOTES_DIR.is_dir():
+        return []
+    return sorted(p for p in NOTES_DIR.iterdir() if p.is_dir())
+
+
+def vault_path(stored: str) -> str:
+    """Turn a stored vault ('workshop:Name' or an absolute path) into a real path."""
+    if stored.startswith(WS_PREFIX):
+        return str(NOTES_DIR / stored[len(WS_PREFIX):])
+    return stored
+
+
+def stored_vault(path: str) -> str:
+    p = Path(path)
+    try:
+        if p.resolve().parent == NOTES_DIR.resolve():
+            return WS_PREFIX + p.name
+    except OSError:
+        pass
+    return str(p)
+
+
+def vault_warnings(path: str) -> List[str]:
+    """Reasons moving this vault could break something it relies on."""
+    out = []
+    low = str(path).lower()
+    if "onedrive" in low or "dropbox" in low or "google drive" in low or "icloud" in low:
+        out.append("it's in a cloud-synced folder (it syncs to your other devices from there)")
+    core_plugins = read_json(Path(path) / ".obsidian" / "core-plugins.json", None)
+    if (isinstance(core_plugins, list) and "sync" in core_plugins) or \
+            (isinstance(core_plugins, dict) and core_plugins.get("sync")):
+        out.append("Obsidian Sync is turned on for it")
+    if (Path(path) / ".git").is_dir():
+        out.append("it's a git repository")
+    return out
+
+
+def move_vault_in(path: str, progress=lambda f, name: None) -> Path:
+    """Copy a vault into the Workshop notes folder and point Obsidian at the copy.
+    The original folder is left as it is (a backup until you delete it)."""
+    src = Path(path)
+    if not src.is_dir():
+        raise RuntimeError("that vault's folder doesn't exist any more")
+    dst = NOTES_DIR / src.name
+    n = 2
+    while dst.exists():
+        dst, n = NOTES_DIR / f"{src.name} ({n})", n + 1
+    copy_tree(src, dst, [".trash"], progress)
+    # check the copy is complete before switching Obsidian over
+    def count(folder):
+        n = 0
+        for root, dirs, files in os.walk(folder):
+            dirs[:] = [d for d in dirs if d != ".trash"]
+            n += len(files)
+        return n
+    if count(dst) < count(src):
+        raise RuntimeError("not every file copied (is something open or locked?) - nothing was switched over")
+    replace_vault_in_obsidian(str(src), str(dst))
+    return dst
+
+
+def _vault_id() -> str:
+    import secrets
+    return secrets.token_hex(8)
+
+
+def replace_vault_in_obsidian(old: str, new: str) -> None:
+    """Swap a vault's location in Obsidian's own vault list. Obsidian must be closed."""
+    path = OBSIDIAN_JSON()
+    d = read_json(path, {})
+    vaults = d.setdefault("vaults", {})
+    vid = next((k for k, v in vaults.items() if os.path.normcase(v.get("path", "")) == os.path.normcase(old)), None)
+    entry = vaults.pop(vid, {}) if vid else {}
+    entry.update(path=new, ts=int(time.time() * 1000), open=True)
+    for v in vaults.values():
+        v.pop("open", None)
+    vaults[vid or _vault_id()] = entry
+    write_json(path, d)
+
+
+def register_workshop_vaults() -> int:
+    """Make sure Obsidian on this PC knows about the vaults in the Workshop
+    (e.g. after copying the Workshop to another PC). Obsidian must be closed."""
+    vs = workshop_vaults()
+    if not vs:
+        return 0
+    path = OBSIDIAN_JSON()
+    d = read_json(path, {})
+    vaults = d.setdefault("vaults", {})
+    known = {os.path.normcase(v.get("path", "")) for v in vaults.values()}
+    added = 0
+    for v in vs:
+        if os.path.normcase(str(v)) not in known:
+            vaults[_vault_id()] = {"path": str(v), "ts": int(time.time() * 1000)}
+            added += 1
+    # a Workshop that moved leaves entries pointing at folders that no longer exist; drop those that were ours
+    for k in [k for k, v in vaults.items() if v.get("path") and not Path(v["path"]).exists()
+              and Path(v["path"]).parent.name == "notes"]:
+        vaults.pop(k)
+    if added or not path.exists():
+        write_json(path, d)
+    return added
+
+
+def _latest_change(folder: Path) -> float:
+    latest = 0.0
+    for root, dirs, files in os.walk(folder):
+        dirs[:] = [d for d in dirs if d != ".trash"]
+        for f in files:
+            try:
+                latest = max(latest, os.path.getmtime(os.path.join(root, f)))
+            except OSError:
+                pass
+    return latest
+
+
+def backup_vault(path: str, force: bool = False) -> Optional[Path]:
+    """Zip a vault into the Workshop backups folder (backups/Obsidian/<vault>). Skips it when
+    nothing changed since the last backup. Keeps the newest KEEP_BACKUPS."""
+    import zipfile
+    src = Path(path)
+    if not src.is_dir():
+        return None
+    folder = BACKUP_DIR / src.name
+    existing = list_backups(src.name)
+    if existing and not force and _latest_change(src) <= existing[0].stat().st_mtime:
+        return None
+    folder.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y-%m-%d %H%M%S")
+    out = folder / f"{src.name} {stamp}.zip"
+    tmp = out.with_suffix(".zip.part")
+    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
+        for root, dirs, files in os.walk(src):
+            dirs[:] = [d for d in dirs if d != ".trash"]
+            for f in files:
+                full = Path(root) / f
+                try:
+                    z.write(full, full.relative_to(src))
+                except OSError:
+                    pass                      # a file being written right now; next backup gets it
+    os.replace(tmp, out)
+    for old in list_backups(src.name)[KEEP_BACKUPS:]:
+        try:
+            old.unlink()
+        except OSError:
+            pass
+    return out
+
+
+def list_backups(vault_name: str) -> List[Path]:
+    folder = BACKUP_DIR / vault_name
+    if not folder.is_dir():
+        return []
+    return sorted(folder.glob("*.zip"), key=lambda p: -p.stat().st_mtime)
+
+
+def restore_backup(zip_path: Path, vault: str) -> Path:
+    """Put a backup back. The current vault folder is kept next to it, renamed."""
+    import zipfile
+    target = Path(vault)
+    if target.exists():
+        keep = target.with_name(f"{target.name} (before restore {time.strftime('%Y-%m-%d %H%M')})")
+        os.replace(target, keep)
+    target.mkdir(parents=True)
+    with zipfile.ZipFile(zip_path) as z:
+        z.extractall(target)
+    return target
+
+
+def obsidian_installer() -> Optional[UpdateInfo]:
+    """Latest Obsidian installer for Windows, from Obsidian's own GitHub releases."""
+    d = http_json("https://api.github.com/repos/obsidianmd/obsidian-releases/releases/latest")
+    a = next((x for x in d.get("assets", []) if x.get("name", "").lower().endswith(".exe")
+              and "arm64" not in x["name"].lower() and "32" not in x["name"]), None)
+    if not a:
+        return None
+    return UpdateInfo(str(d.get("tag_name", "")).lstrip("vV"), "", a["browser_download_url"], int(a.get("size") or 0))
 
 
 def obsidian_link(vault_path: str) -> str:

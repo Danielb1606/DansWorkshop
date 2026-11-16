@@ -30,6 +30,12 @@ opens, shows and updates them. Owner: GitHub `Danielb1606`. Repo: `Danielb1606/D
   updater); found at %LOCALAPPDATA%\Programs\Obsidian\Obsidian.exe (hidden if not installed). Launched as the
   normal user via explorer.exe (admin breaks obsidian:// links / drag-drop). Vaults read from
   %APPDATA%\obsidian\obsidian.json; card menu: Open vault, Play opens… (state `vault`). No updates row.
+- Notes: vaults can be moved into `Dan's Workshop\notes\<vault>` (copy, verify, then Obsidian's vault list
+  is switched; original left as backup; warns for OneDrive/Dropbox/Obsidian Sync/git). Stored as `workshop:<name>`
+  so it survives moving PC; on start / when Obsidian closes, Workshop vaults are added to obsidian.json if
+  missing. When Obsidian closes, changed vaults are zipped to `backups\Obsidian\<vault>\` (keep 20); Restore
+  keeps the current version renamed "before restore". Install Obsidian button downloads the latest installer
+  from obsidianmd/obsidian-releases and runs it as the normal user.
 - Custom apps: "Add an app" copies the exe's folder into apps\ (kind `custom`, no updates).
 
 ## Behaviour decisions (from Dan)
@@ -57,5 +63,6 @@ Run `python tests/test_core.py` first.
 
 ## History
 - 1.0.0 - first version.
+- 1.2.0 - notes in the Workshop, automatic notes backups, restore, Install Obsidian.
 - 1.1.0 - Obsidian tile.
 - 1.0.1 - sharper, bolder toolbox icon (each size drawn separately by make_icon.py; window uses iconphoto with all sizes).
