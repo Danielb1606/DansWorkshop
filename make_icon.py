@@ -1,23 +1,35 @@
-"""Draws the toolbox icon (assets/icon.png and assets/icon.ico)."""
+"""Draws the toolbox icon (assets/icon.png, assets/icon.ico).
+Each size is drawn separately (at 8x, then shrunk) so small sizes stay crisp."""
 from PIL import Image, ImageDraw
 
-S = 1024
-def draw(size=S):
+GOLD, LIGHT, DARK, BG = "#d4a84b", "#f3dc9a", "#1b1d21", "#1b1d21"
+
+
+def draw(size: int) -> Image.Image:
+    S = size * 8
+    k = S / 256
     im = Image.new("RGBA", (S, S), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
-    d.rounded_rectangle((0, 0, S - 1, S - 1), radius=220, fill="#1b1d21")
-    gold, light, dark = "#c9a24a", "#f0d58f", "#1b1d21"
-    # handle
-    d.rounded_rectangle((372, 228, 652, 400), radius=60, outline=gold, width=58)
-    # body
-    d.rounded_rectangle((170, 360, 854, 800), radius=70, fill=gold)
+    small = size <= 24
+    d.rounded_rectangle((0, 0, S - 1, S - 1), radius=int(52 * k), fill=BG)
+    # handle (thicker when tiny)
+    d.rounded_rectangle((int(84 * k), int(30 * k), int(172 * k), int(96 * k)), radius=int(22 * k),
+                        outline=GOLD, width=int((26 if small else 20) * k))
+    # body fills most of the square
+    d.rounded_rectangle((int(22 * k), int(78 * k), int(234 * k), int(226 * k)), radius=int(22 * k), fill=GOLD)
     # lid line
-    d.rectangle((170, 500, 854, 540), fill=dark)
+    d.rectangle((int(22 * k), int(124 * k), int(234 * k), int((140 if small else 136) * k)), fill=DARK)
     # latch
-    d.rounded_rectangle((454, 470, 570, 590), radius=24, fill=light)
-    d.rounded_rectangle((484, 500, 540, 560), radius=10, fill=gold)
-    return im
+    d.rounded_rectangle((int(104 * k), int(108 * k), int(152 * k), int(158 * k)), radius=int(8 * k), fill=LIGHT)
+    if not small:
+        d.rounded_rectangle((int(116 * k), int(120 * k), int(140 * k), int(146 * k)), radius=int(4 * k), fill=GOLD)
+    return im.resize((size, size), Image.LANCZOS)
 
-im = draw()
-im.resize((256, 256), Image.LANCZOS).save("assets/icon.png")
-im.save("assets/icon.ico", sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
+
+sizes = [16, 20, 24, 32, 40, 48, 64, 128, 256]
+imgs = {s: draw(s) for s in sizes}
+imgs[256].save("assets/icon.png")
+for s in (16, 32, 48):
+    imgs[s].save(f"assets/icon{s}.png")
+imgs[256].save("assets/icon.ico", sizes=[(s, s) for s in sizes],
+               append_images=[imgs[s] for s in sizes if s != 256])

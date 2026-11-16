@@ -53,3 +53,4 @@ Run `python tests/test_core.py` first.
 
 ## History
 - 1.0.0 - first version.
+- 1.0.1 - sharper, bolder toolbox icon (each size drawn separately by make_icon.py; window uses iconphoto with all sizes).

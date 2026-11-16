@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 APP_NAME = "Dan's Workshop"
 EXE_NAME = "Dan's Workshop.exe"
 HUB_REPO = "Danielb1606/DansWorkshop"
