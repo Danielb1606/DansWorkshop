@@ -73,6 +73,16 @@ def icon(name: str, size: int = 14):
     return fallback, ("Segoe UI", size)
 
 
+def fit_text(text: str, font, width: int) -> str:
+    """Shorten text with … so it fits on one line (keeps every tile the same height)."""
+    f = tkfont.Font(font=font)
+    if f.measure(text) <= width:
+        return text
+    while text and f.measure(text + "…") > width:
+        text = text[:-1]
+    return text.rstrip(" ·,") + "…"
+
+
 def photo_from_pil(img) -> tk.PhotoImage:
     buf = io.BytesIO()
     img.save(buf, format="PNG")
@@ -120,39 +130,63 @@ class Btn(tk.Label):
 
 
 class ScrollFrame(tk.Frame):
+    """Scrolling area with a slim scrollbar that's almost invisible until the mouse
+    is over the area (and only when there's something to scroll)."""
+    BAR_W = 10
+
     def __init__(self, parent, bg=BG):
         super().__init__(parent, bg=bg)
         self.canvas = tk.Canvas(self, bg=bg, highlightthickness=0, bd=0)
-        self.bar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview, style="Dark.Vertical.TScrollbar")
+        self.bar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview, style="Ghost.Vertical.TScrollbar")
         self.inner = tk.Frame(self.canvas, bg=bg)
         self.win = self.canvas.create_window(0, 0, anchor="nw", window=self.inner)
         self.canvas.configure(yscrollcommand=self._on_scroll)
+        self.bar.pack(side="right", fill="y", padx=(4, 0))          # always takes its space, so nothing jumps
         self.canvas.pack(side="left", fill="both", expand=True)
         self.inner.bind("<Configure>", lambda e: self._sync())
         self.canvas.bind("<Configure>", lambda e: (self.canvas.itemconfigure(self.win, width=e.width), self._sync()))
+        self.overflow = False
+        self.hover = False
         self.bind_all("<MouseWheel>", self._wheel, add="+")
         self.bind_all("<Button-4>", lambda e: self._wheel(e, -120), add="+")
         self.bind_all("<Button-5>", lambda e: self._wheel(e, 120), add="+")
+        self.bind_all("<Motion>", self._motion, add="+")
+        self.winfo_toplevel().bind("<Leave>", lambda e: self._set_hover(False), add="+")
+
+    def _inside(self, x, y) -> bool:
+        try:
+            w = self.winfo_containing(x, y)
+        except (KeyError, tk.TclError):
+            return False
+        while w is not None and w is not self:
+            w = w.master
+        return w is self
+
+    def _motion(self, e):
+        if self.winfo_exists() and self.winfo_ismapped():
+            self._set_hover(self._inside(e.x_root, e.y_root))
+
+    def _set_hover(self, on):
+        if not self.winfo_exists():
+            return
+        self.hover = on
+        self.bar.configure(style="Dark.Vertical.TScrollbar" if (on and self.overflow) else "Ghost.Vertical.TScrollbar")
 
     def _sync(self):
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
     def _on_scroll(self, a, b):
         self.bar.set(a, b)
-        if float(a) <= 0 and float(b) >= 1:
-            self.bar.pack_forget()
-        elif not self.bar.winfo_ismapped():
-            self.bar.pack(side="right", fill="y")
+        self.overflow = not (float(a) <= 0 and float(b) >= 1)
+        self._set_hover(self.hover)
 
     def _wheel(self, e, delta=None):
-        if not self.winfo_ismapped():
+        if not self.winfo_exists() or not self.winfo_ismapped() or not self.overflow:
             return
-        w = self.winfo_containing(e.x_root, e.y_root)
-        while w is not None and w is not self:
-            w = w.master
-        if w is self:
+        if self._inside(e.x_root, e.y_root):
             d = delta if delta is not None else -e.delta
             self.canvas.yview_scroll(int(d / 120) or (1 if d > 0 else -1), "units")
+            self._set_hover(True)
 
 
 class Banner(tk.Frame):
@@ -196,15 +230,16 @@ class Card(tk.Frame):
         body.pack(fill="x", padx=12, pady=(10, 12))
         top = tk.Frame(body, bg=CARD)
         top.pack(fill="x")
-        tk.Label(top, text=app.name, bg=CARD, fg=TEXT, font=BOLD, anchor="w").pack(side="left")
+        tk.Label(top, text=fit_text(app.name, BOLD, max(60, width - 56)), bg=CARD, fg=TEXT, font=BOLD,
+                 anchor="w").pack(side="left")
         g, f = icon("more", 12)
         more = tk.Label(top, text=g, font=f, bg=CARD, fg=MUTED, cursor="hand2", padx=4)
         more.pack(side="right")
         more.bind("<Button-1>", lambda e: hub.card_menu(app, e.x_root, e.y_root))
         self.bind("<Button-3>", lambda e: hub.card_menu(app, e.x_root, e.y_root))
         self.art.bind("<Button-3>", lambda e: hub.card_menu(app, e.x_root, e.y_root))
-        self.meta = tk.Label(body, text="", bg=CARD, fg=MUTED, font=SMALL, anchor="w", justify="left",
-                             wraplength=max(120, width - 28))
+        self.meta = tk.Label(body, text="", bg=CARD, fg=MUTED, font=SMALL, anchor="w")
+        self._meta_w = max(60, width - 26)
         self.meta.pack(fill="x", pady=(2, 10))
         self.btn = Btn(body, "Play", lambda: hub.primary(app), kind="primary", pady=6)
         self.btn.pack(fill="x")
@@ -256,7 +291,7 @@ class Card(tk.Frame):
             bits.append(f"{'last run' if a.kind == 'script' else 'opened'} {core.ago(st['last_opened'])}")
         else:
             bits.append(a.blurb or "not opened yet")
-        self.meta.configure(text="  ·  ".join(bits))
+        self.meta.configure(text=fit_text("  ·  ".join(bits), SMALL, self._meta_w))
         if running:
             self._pill("Running", GREEN)
         elif upd:
@@ -316,10 +351,12 @@ class Hub:
 
         root.title(core.APP_NAME)
         root.configure(bg=BG)
-        root.minsize(760, 540)
+        root.minsize(640, 460)
         self._style()
         self.build()
         root.after(200, self.first_steps)
+        root.bind("<Configure>", self._on_root_configure, add="+")
+        root.after(600, self._snap)                      # start at the right shape
         root.after(1000, self.tick)
         threading.Thread(target=self.poll_loop, daemon=True).start()
 
@@ -331,9 +368,13 @@ class Hub:
             st.theme_use("clam")
         except tk.TclError:
             pass
-        st.configure("Dark.Vertical.TScrollbar", background=RAISED, troughcolor=BG, bordercolor=BG,
-                     arrowcolor=MUTED, lightcolor=RAISED, darkcolor=RAISED, gripcount=0)
-        st.map("Dark.Vertical.TScrollbar", background=[("active", "#3a3d44")])
+        slim = [("Vertical.Scrollbar.trough", {"sticky": "ns", "children": [
+            ("Vertical.Scrollbar.thumb", {"expand": "1", "sticky": "nswe"})]})]
+        for name, thumb in (("Dark.Vertical.TScrollbar", "#3a3e46"), ("Ghost.Vertical.TScrollbar", "#1d2025")):
+            st.layout(name, slim)
+            st.configure(name, background=thumb, troughcolor=BG, bordercolor=BG, lightcolor=thumb, darkcolor=thumb,
+                         gripcount=0, width=ScrollFrame.BAR_W, arrowsize=ScrollFrame.BAR_W, relief="flat")
+        st.map("Dark.Vertical.TScrollbar", background=[("active", "#555a63")])
 
     def build(self):
         for w in self.root.winfo_children():
@@ -488,9 +529,9 @@ class Hub:
         self.banner_box.pack(fill="x", padx=22)
         self.paint_banners()
         self.scroll = ScrollFrame(self.body)
-        self.scroll.pack(fill="both", expand=True, padx=(22, 8), pady=(14, 0))
+        self.scroll.pack(fill="both", expand=True, padx=(22, 8), pady=(14, 10))
         self.grid = self.scroll.inner
-        self.scroll.canvas.bind("<Configure>", lambda e: self.root.after(60, self.fill_grid), add="+")
+        self.scroll.bind("<Configure>", lambda e: self.root.after(60, self.fill_grid), add="+")
         self.root.after(30, self.fill_grid)
 
     def _placeholder(self, ent, text):
@@ -538,33 +579,117 @@ class Hub:
             return sorted(apps, key=lambda a: a.name.lower())
         return sorted(apps, key=lambda a: (not a.installed, -(core.app_state(self.state, a.id).get("last_opened") or 0), a.name.lower()))
 
+    COLS, ROWS = 3, 2
+
+    def body_height(self) -> int:
+        """Height of a tile below its picture (name, description, button)."""
+        if not getattr(self, "_body_h", None):
+            b, sm = tkfont.Font(font=BOLD).metrics("linespace"), tkfont.Font(font=SMALL).metrics("linespace")
+            self._body_h = 10 + b + 2 + sm + 10 + (b + 12) + 12 + 2
+        return self._body_h
+
+    def tile_width(self, gw: int, gh: int) -> int:
+        """Biggest tile width that fits 3 across in gw and 2 rows in gh."""
+        by_w = (gw - GAP * (self.COLS - 1)) / self.COLS
+        by_h = ((gh - GAP * (self.ROWS - 1) - 4) / self.ROWS - self.body_height()) / ART_RATIO
+        return int(max(120, min(by_w, by_h)))
+
     def fill_grid(self, force=False):
         if self.page != "library" or not self.grid.winfo_exists():
             return
-        # leave room for the scrollbar whether or not it's showing, so cards never get cut off
-        width = max(300, self.scroll.winfo_width() - 22)
-        cols = 3 if width >= 600 else 2 if width >= 400 else 1
-        cw = (width - GAP * (cols - 1)) // cols
+        gw = self.scroll.winfo_width() - ScrollFrame.BAR_W - 6
+        gh = self.scroll.winfo_height()
+        if gw < 50 or gh < 50:
+            return
+        cols = self.COLS
+        cw = self.tile_width(gw, gh)
         apps = self.sorted_apps()
-        key = (cols, cw // 6, tuple(a.id for a in apps))
+        key = (cw, tuple(a.id for a in apps))
         if key == self.layout_key and not force:
             return
         self.layout_key = key
         for w in self.grid.winfo_children():
             w.destroy()
         self.cards.clear()
-        for c in range(3):
-            self.grid.grid_columnconfigure(c, weight=0, minsize=0)
+        holder = tk.Frame(self.grid, bg=BG)
+        holder.pack(anchor="n")                          # centred when the height decides the tile size
         for i, app in enumerate(apps):
-            card = Card(self.grid, self, app, cw)
-            card.grid(row=i // cols, column=i % cols, padx=(0 if i % cols == 0 else GAP, 0), pady=(0, GAP), sticky="n")
+            card = Card(holder, self, app, cw)
+            card.grid(row=i // cols, column=i % cols, padx=(0 if i % cols == 0 else GAP, 0), pady=(0, GAP), sticky="nsew")
             self.cards[app.id] = card
         if not self.search_text():
             i = len(apps)
-            AddCard(self.grid, self, cw).grid(row=i // cols, column=i % cols,
-                                             padx=(0 if i % cols == 0 else GAP, 0), pady=(0, GAP), sticky="n")
+            AddCard(holder, self, cw).grid(row=i // cols, column=i % cols,
+                                           padx=(0 if i % cols == 0 else GAP, 0), pady=(0, GAP), sticky="n")
         elif not apps:
-            tk.Label(self.grid, text="No apps match your search.", bg=BG, fg=MUTED, font=FONT).grid(row=0, column=0, sticky="w")
+            tk.Label(holder, text="No apps match your search.", bg=BG, fg=MUTED, font=FONT).grid(row=0, column=0, sticky="w")
+        # measure a real tile once so the window shape is exact
+        if apps:
+            holder.update_idletasks()
+            c = next(iter(self.cards.values()))
+            real = c.winfo_reqheight() - c.h
+            if real > 0 and abs(real - self.body_height()) > 1:
+                self._body_h = real
+                self.root.after_idle(lambda: self.fill_grid(force=True))
+        self._remember_chrome()
+
+    # ------------------------------------------------------------------ window shape
+
+    def _remember_chrome(self):
+        """How much of the window isn't the tile area (header, rail, banners...)."""
+        r = self.root
+        r.update_idletasks()
+        self._chrome = (r.winfo_width() - (self.scroll.winfo_width() - ScrollFrame.BAR_W - 6),
+                        r.winfo_height() - self.scroll.winfo_height())
+
+    def ideal_size(self, w: int, h: int, by: str) -> tuple:
+        """Window size that fits exactly 3 x 2 tiles, keeping the width (by='w') or the height (by='h')."""
+        cw_extra, ch_extra = self._chrome
+        B = self.body_height()
+        if by == "w":
+            cw = (w - cw_extra - GAP * (self.COLS - 1)) / self.COLS
+            return w, int(round(ch_extra + self.ROWS * (cw * ART_RATIO + B) + GAP * (self.ROWS - 1) + 4))
+        cw = ((h - ch_extra - GAP * (self.ROWS - 1) - 4) / self.ROWS - B) / ART_RATIO
+        return int(round(cw_extra + self.COLS * cw + GAP * (self.COLS - 1))), h
+
+    def _on_root_configure(self, e):
+        if e.widget is not self.root:
+            return
+        size = (e.width, e.height)
+        if size == getattr(self, "_snapped_to", None):
+            return
+        if getattr(self, "_snap_job", None):
+            self.root.after_cancel(self._snap_job)
+        self._snap_job = self.root.after(350, self._snap)          # once you stop dragging
+
+    def _snap(self):
+        self._snap_job = None
+        r = self.root
+        if r.state() != "normal" or not getattr(self, "_chrome", None):
+            return
+        w, h = r.winfo_width(), r.winfo_height()
+        last = getattr(self, "_snapped_to", None) or (w, h)
+        by = "h" if abs(h - last[1]) > abs(w - last[0]) else "w"
+        tw, th = self.ideal_size(w, h, by)
+        sw, sh = r.winfo_screenwidth(), r.winfo_screenheight() - 40
+        if th > sh:                                       # too tall for the screen: shrink to fit
+            tw, th = self.ideal_size(w, sh, "h")
+        if tw > sw:
+            tw, th = self.ideal_size(sw, h, "w")
+        mw, mh = self.min_size()
+        if tw < mw or th < mh:
+            tw, th = mw, mh
+        if abs(tw - w) > 2 or abs(th - h) > 2:
+            self._snapped_to = (tw, th)
+            r.geometry(f"{tw}x{th}+{r.winfo_x()}+{r.winfo_y()}")
+        else:
+            self._snapped_to = (w, h)
+
+    def min_size(self) -> tuple:
+        cw_extra, ch_extra = self._chrome
+        cw = 150
+        return (int(cw_extra + self.COLS * cw + GAP * (self.COLS - 1)),
+                int(ch_extra + self.ROWS * (cw * ART_RATIO + self.body_height()) + GAP * (self.ROWS - 1) + 4))
 
     def app_icon(self, app):
         """Its own icon (cached for a minute so the tiles stay quick)."""

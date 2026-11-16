@@ -46,7 +46,10 @@ opens, shows and updates them. Owner: GitHub `Danielb1606`. Repo: `Danielb1606/D
 
 ## Behaviour decisions (from Dan)
 - Graphite and gold look (Steam-like library), toolbox icon, 4 rail pages: Library, Updates, Activity, Settings.
-- 3 cards per row, must stay usable in a non-fullscreen window (drops to 2/1 columns only when very narrow).
+- Library is always 3 x 2 tiles visible (Dan's rule): tiles size to fit both width and height, and after a
+  resize the window snaps to the shape that fits 3 x 2 exactly (keeps whichever side you dragged most; not when
+  maximised). All tiles the same height (one-line description with …). Slim scrollbar, nearly invisible until
+  the mouse is over the tiles, for more than 6.
 - Card art = screenshot of the app's main window, taken automatically when it's in front for ~4 s,
   retaken after updates; "Change picture" on the card menu.
 - Everything runs as administrator. A scheduled task (`Dan's Workshop`, RunLevel Highest, Priority 4) +
@@ -72,6 +75,7 @@ Run `python tests/test_core.py` first.
 
 ## History
 - 1.0.0 - first version.
+- 1.3.4 - equal tile heights; window keeps a 3 x 2 shape; ghost scrollbar.
 - 1.3.3 - taskbar sizes of the toolbox icon fill the slot (no dark tile, thin outline); shortcuts + pinned
   shortcut re-saved and Windows icon cache refreshed (ie4uinit -show) when ICON_REV changes; tiles show each
   app's OWN icon (Dan's rule: taskbar icon = tile picture): assets icon, else extracted from resources.neu
