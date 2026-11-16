@@ -217,8 +217,9 @@ class Card(tk.Frame):
         c.configure(bg=self.app.colour)
         st = core.app_state(self.hub.state, self.app.id)
         p = core.art_path(self.app)
-        if self.app.icon and not st.get("custom_art"):
-            img = self.hub.icon_image(self.app, self.w, self.h)
+        icon = None if st.get("custom_art") else self.hub.app_icon(self.app)
+        if icon:
+            img = self.hub.icon_image(self.app, icon, self.w, self.h)
         else:
             img = self.hub.art_image(self.app, p, self.w, self.h) if p else None
         if img is not None:
@@ -309,6 +310,7 @@ class Hub:
         self.sort = self.state.get("sort", "recent")
         self.busy: Dict[str, str] = {}          # app id -> what's happening
         self.capture_seen: Dict[str, tuple] = {}
+        self._icons: Dict[str, tuple] = {}
         if startup_msg:
             self.messages.append((startup_msg, "good"))
 
@@ -564,16 +566,33 @@ class Hub:
         elif not apps:
             tk.Label(self.grid, text="No apps match your search.", bg=BG, fg=MUTED, font=FONT).grid(row=0, column=0, sticky="w")
 
-    def icon_image(self, app, w, h):
-        """The app's own icon, centred on its colour."""
-        key = (app.id, "icon", w, h)
+    def app_icon(self, app):
+        """Its own icon (cached for a minute so the tiles stay quick)."""
+        now = time.time()
+        hit = self._icons.get(app.id)
+        if hit and now - hit[1] < 60:
+            return hit[0]
+        p = core.app_icon(app)
+        self._icons[app.id] = (p, now)
+        return p
+
+    def icon_image(self, app, path, w, h):
+        """The app's own icon, centred on its colour; scaled up and sharpened when it's small."""
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            return None
+        key = (app.id, "icon", w, h, mtime)
         if key in self.art_cache:
             return self.art_cache[key]
         try:
-            from PIL import Image
-            ic = Image.open(core.ASSETS / app.icon).convert("RGBA")
+            from PIL import Image, ImageFilter
+            ic = Image.open(path).convert("RGBA")
             size = int(h * 0.78)
+            grow = size > ic.width
             ic = ic.resize((size, size), Image.LANCZOS)
+            if grow:
+                ic = ic.filter(ImageFilter.UnsharpMask(radius=1.2, percent=80, threshold=2))
             bg = Image.new("RGBA", (w, h), app.colour)
             bg.alpha_composite(ic, ((w - size) // 2, (h - size) // 2))
             ph = photo_from_pil(bg.convert("RGB"))
@@ -854,7 +873,7 @@ class Hub:
             m.add_command(label="Request a change…", command=lambda: self.request_change(app))
             m.add_separator()
             m.add_command(label="Change picture…", command=lambda: self.change_picture(app))
-            m.add_command(label="Use its icon again" if app.icon else "Retake picture next time it's open", command=lambda: self.retake(app))
+            m.add_command(label="Use its icon again" if (app.icon or self._icons.get(app.id, (None,))[0]) else "Retake picture next time it's open", command=lambda: self.retake(app))
         else:
             m.add_command(label="Add from a folder…", command=lambda: self.add_from_folder(app))
         if app.kind == "custom":
@@ -1139,7 +1158,7 @@ class Hub:
             m.add_command(label="Open backups folder", command=lambda: core.open_folder(core.BACKUP_DIR))
         m.add_separator()
         m.add_command(label="Change picture…", command=lambda: self.change_picture(app))
-        m.add_command(label="Retake picture next time it's open", command=lambda: self.retake(app))
+        m.add_command(label="Use its icon again", command=lambda: self.retake(app))
 
     def _set_vault(self, app, stored):
         core.app_state(self.state, app.id)["vault"] = stored
@@ -1307,7 +1326,7 @@ class Hub:
 
     def retake(self, app):
         st = core.app_state(self.state, app.id)
-        if app.icon:
+        if self._icons.get(app.id, (None,))[0] or app.icon:
             st.pop("custom_art", None)
             core.save_state(self.state)
             self.refresh_cards()
@@ -1353,6 +1372,10 @@ class Hub:
             if self.settings.get("task_path") != str(exe):
                 # first run, or the folder moved: make (or fix) the no-prompt shortcut
                 self.setup_admin()
+            if self.settings.get("icon_rev") != core.ICON_REV:
+                threading.Thread(target=core.refresh_icons, args=(exe,), daemon=True).start()
+                self.settings["icon_rev"] = core.ICON_REV
+                core.save_settings(self.settings)
 
     def poll_loop(self):
         while True:
@@ -1363,7 +1386,7 @@ class Hub:
                 for app in core.all_apps(self.state):
                     pids = core.pids_for(app, procs)
                     st = core.app_state(self.state, app.id)
-                    if not pids or st.get("custom_art") or app.icon:
+                    if not pids or st.get("custom_art") or self._icons.get(app.id, (None,))[0]:
                         self.capture_seen.pop(app.id, None)
                         continue
                     need = st.get("recapture") or not core.art_path(app)

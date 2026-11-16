@@ -198,4 +198,15 @@ except RuntimeError:
     check(True, "missing script reported")
 check("README" in core.change_brief(dla, ""), "change brief for scripts")
 
+# tile icons: the app's own icon (Poker Trainer's comes out of its resources.neu)
+real = Path("/mnt/user-data/uploads/Poker Trainer/resources.neu")
+if real.exists():
+    import shutil as _sh
+    _sh.copy2(real, pt.dir / "resources.neu")
+    ic = core.app_icon(pt)
+    from PIL import Image
+    check(ic is not None and Image.open(ic).size == (256, 256), "Poker Trainer's own icon used for its tile")
+da2 = next(a for a in core.BUILTIN if a.id == "daniels-assignment")
+check(core.app_icon(da2) is not None, "Daniels Assignment uses its flask icon")
+
 print(f"all {ok} checks passed")

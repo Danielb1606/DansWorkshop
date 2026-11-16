@@ -72,6 +72,10 @@ Run `python tests/test_core.py` first.
 
 ## History
 - 1.0.0 - first version.
+- 1.3.3 - taskbar sizes of the toolbox icon fill the slot (no dark tile, thin outline); shortcuts + pinned
+  shortcut re-saved and Windows icon cache refreshed (ie4uinit -show) when ICON_REV changes; tiles show each
+  app's OWN icon (Dan's rule: taskbar icon = tile picture): assets icon, else extracted from resources.neu
+  (Neutralino) or from the exe (PrivateExtractIconsW), upscaled + sharpened when small.
 - 1.3.2 - fixed self-update (new version installs itself instead of swap.cmd).
 - 1.3.1 - app icons on tiles (`icon` field, assets/app_<id>.png): Daniels Assignment = red flask (Dan picked option A); Deadlock = DL art-deco diamond with a big outlined brass gear (option 3).
 - 1.3.0 - Deadlock Auto Config tile; cards no longer cut off by the scrollbar.

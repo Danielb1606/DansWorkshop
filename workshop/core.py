@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
-__version__ = "1.3.2"
+__version__ = "1.3.3"
 APP_NAME = "Dan's Workshop"
 EXE_NAME = "Dan's Workshop.exe"
 HUB_REPO = "Danielb1606/DansWorkshop"
@@ -955,6 +955,108 @@ def set_custom_art(app: AppDef, picture: Path) -> None:
     img.save(ART_DIR / f"{app.id}.png")
 
 
+def neu_file(path: Path, name: str) -> Optional[bytes]:
+    """Read one file out of a Neutralino resources.neu, e.g. 'resources/icons/appIcon.png'."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(16)
+            header = json.loads(f.read(struct.unpack("<I", head[12:16])[0]))
+            base = 8 + struct.unpack("<I", head[4:8])[0]
+            node = header
+            for part in name.strip("/").split("/"):
+                node = node["files"][part]
+            f.seek(base + int(node["offset"]))
+            return f.read(int(node["size"]))
+    except (OSError, ValueError, KeyError, struct.error):
+        return None
+
+
+def exe_icon(exe: Path, size: int = 256):
+    """The icon built into a Windows program, as a picture (None if it has none)."""
+    if not IS_WIN:
+        return None
+    from PIL import Image
+
+    class ICONINFO(ctypes.Structure):
+        _fields_ = [("fIcon", wintypes.BOOL), ("xHotspot", wintypes.DWORD), ("yHotspot", wintypes.DWORD),
+                    ("hbmMask", wintypes.HBITMAP), ("hbmColor", wintypes.HBITMAP)]
+
+    class BITMAPINFOHEADER(ctypes.Structure):
+        _fields_ = [("biSize", wintypes.DWORD), ("biWidth", wintypes.LONG), ("biHeight", wintypes.LONG),
+                    ("biPlanes", wintypes.WORD), ("biBitCount", wintypes.WORD), ("biCompression", wintypes.DWORD),
+                    ("biSizeImage", wintypes.DWORD), ("biXPelsPerMeter", wintypes.LONG),
+                    ("biYPelsPerMeter", wintypes.LONG), ("biClrUsed", wintypes.DWORD), ("biClrImportant", wintypes.DWORD)]
+
+    gdi = ctypes.WinDLL("gdi32")
+    hicon = wintypes.HICON()
+    got = _u32.PrivateExtractIconsW(str(exe), 0, size, size, ctypes.byref(hicon), None, 1, 0)
+    if got < 1 or not hicon:
+        return None
+    info = ICONINFO()
+    try:
+        if not _u32.GetIconInfo(hicon, ctypes.byref(info)):
+            return None
+        bmi = BITMAPINFOHEADER()
+        bmi.biSize, bmi.biWidth, bmi.biHeight = ctypes.sizeof(BITMAPINFOHEADER), size, -size
+        bmi.biPlanes, bmi.biBitCount, bmi.biCompression = 1, 32, 0
+        buf = ctypes.create_string_buffer(size * size * 4)
+        hdc = _u32.GetDC(None)
+        try:
+            lines = gdi.GetDIBits(hdc, info.hbmColor, 0, size, buf, ctypes.byref(bmi), 0)
+        finally:
+            _u32.ReleaseDC(None, hdc)
+        if lines != size:
+            return None
+        img = Image.frombuffer("RGBA", (size, size), buf.raw, "raw", "BGRA", 0, 1)
+        if img.getchannel("A").getextrema()[1] == 0:          # old-style icon without alpha
+            img.putalpha(255)
+        return img.copy()
+    finally:
+        for h in (info.hbmColor, info.hbmMask):
+            if h:
+                gdi.DeleteObject(h)
+        _u32.DestroyIcon(hicon)
+
+
+def app_icon(app: AppDef) -> Optional[Path]:
+    """The picture the app uses as its own (taskbar) icon, for its tile. Kept up to
+    date: re-read when the app's files change."""
+    if app.icon:
+        p = ASSETS / app.icon
+        return p if p.is_file() else None
+    if not app.installed:
+        return None
+    out = ART_DIR / f"{app.id}_icon.png"
+    if app.kind == "neutralino":
+        src = app.dir / "resources.neu"
+    elif app.kind in ("external", "custom") and app.exe_path.suffix.lower() == ".exe":
+        src = app.exe_path
+    else:
+        return None
+    try:
+        if out.is_file() and out.stat().st_mtime >= src.stat().st_mtime:
+            return out
+    except OSError:
+        return None
+    try:
+        ART_DIR.mkdir(parents=True, exist_ok=True)
+        if app.kind == "neutralino":
+            cfg = json.loads(neu_file(src, "neutralino.config.json") or b"{}")
+            icon = ((cfg.get("modes") or {}).get("window") or {}).get("icon") or "/resources/icons/appIcon.png"
+            data = neu_file(src, icon)
+            if not data:
+                return None
+            out.write_bytes(data)
+        else:
+            img = exe_icon(src)
+            if img is None:
+                return None
+            img.save(out)
+    except Exception:
+        return None
+    return out
+
+
 def art_path(app: AppDef) -> Optional[Path]:
     p = ART_DIR / f"{app.id}.png"
     return p if p.is_file() else None
@@ -1042,8 +1144,27 @@ def desktop_dir() -> Path:
     return home() / "Desktop"
 
 
-def make_shortcut(exe: Path) -> Tuple[bool, str]:
-    lnk = desktop_dir() / f"{APP_NAME}.lnk"
+ICON_REV = 2          # bump when the Workshop's icon changes: shortcuts and Windows' icon cache get refreshed
+
+
+def pinned_shortcut() -> Path:
+    return appdata() / "Microsoft" / "Internet Explorer" / "Quick Launch" / "User Pinned" / "TaskBar" / f"{APP_NAME}.lnk"
+
+
+def refresh_icons(exe: Path) -> None:
+    """Re-save the desktop and pinned taskbar shortcuts and ask Windows to reload
+    its icon cache, so a new icon shows instead of the old cached one."""
+    for lnk in (desktop_dir() / f"{APP_NAME}.lnk", pinned_shortcut()):
+        if lnk.exists():
+            make_shortcut(exe, lnk)
+    try:
+        _run_hidden(["ie4uinit.exe", "-show"], timeout=15)
+    except Exception:
+        pass
+
+
+def make_shortcut(exe: Path, lnk: Optional[Path] = None) -> Tuple[bool, str]:
+    lnk = lnk or desktop_dir() / f"{APP_NAME}.lnk"
     schtasks = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "schtasks.exe"
     q = lambda s: "'" + str(s).replace("'", "''") + "'"
     ps = ("$s=(New-Object -ComObject WScript.Shell).CreateShortcut(" + q(lnk) + ");"
