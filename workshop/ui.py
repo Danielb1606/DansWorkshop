@@ -1683,12 +1683,7 @@ def launch(args: List[str]) -> None:
         root.iconbitmap(default=str(core.ASSETS / "icon.ico"))
     except tk.TclError:
         pass
-    try:
-        # sharp taskbar/title icons: give Windows every size instead of letting it stretch 16 px
-        root._icons = [tk.PhotoImage(file=str(core.ASSETS / n)) for n in ("icon.png", "icon48.png", "icon32.png", "icon16.png")]
-        root.iconphoto(True, *root._icons)
-    except tk.TclError:
-        pass
+    root.after(50, lambda: core.set_window_icon(root, core.ASSETS / "icon.ico"))
     scale = root.winfo_fpixels("1i") / 96
     w, h = round(1040 * scale), round(700 * scale)
     sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()

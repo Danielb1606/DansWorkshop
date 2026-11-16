@@ -75,6 +75,9 @@ Run `python tests/test_core.py` first.
 
 ## History
 - 1.0.0 - first version.
+- 1.3.5 - real taskbar fix: window icons set with WM_SETICON from the .ico at the DPI's SM_CXICON/SM_CXSMICON
+  (Tk's iconphoto handed Windows the 256 px tile version, which it shrank and blurred - never use iconphoto).
+  Obsidian tile = Dan's purple stone picture, background removed, upscaled + sharpened (assets/app_obsidian.png).
 - 1.3.4 - equal tile heights; window keeps a 3 x 2 shape; ghost scrollbar.
 - 1.3.3 - taskbar sizes of the toolbox icon fill the slot (no dark tile, thin outline); shortcuts + pinned
   shortcut re-saved and Windows icon cache refreshed (ie4uinit -show) when ICON_REV changes; tiles show each

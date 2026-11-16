@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
-__version__ = "1.3.4"
+__version__ = "1.3.5"
 APP_NAME = "Dan's Workshop"
 EXE_NAME = "Dan's Workshop.exe"
 HUB_REPO = "Danielb1606/DansWorkshop"
@@ -217,7 +217,7 @@ BUILTIN = [
         id="obsidian", name="Obsidian", folder="", exe="Obsidian.exe", kind="external",
         external=[r"%LOCALAPPDATA%\Programs\Obsidian\Obsidian.exe", r"%PROGRAMFILES%\Obsidian\Obsidian.exe",
                   r"%LOCALAPPDATA%\Obsidian\Obsidian.exe"],
-        colour="#2e2640", blurb="Your notes."),
+        colour="#2e2640", blurb="Your notes.", icon="app_obsidian.png"),
 ]
 
 
@@ -1062,6 +1062,34 @@ def art_path(app: AppDef) -> Optional[Path]:
     return p if p.is_file() else None
 
 
+def set_window_icon(root, ico: Path) -> None:
+    """Give Windows the exact-size icons for the title bar and taskbar (at this
+    screen's scale), so it never shrinks a big picture down and blurs it."""
+    if not IS_WIN:
+        return
+    try:
+        root.update_idletasks()
+        hwnd = int(root.wm_frame(), 16)
+        try:
+            dpi = _u32.GetDpiForWindow(hwnd) or 96
+            big = _u32.GetSystemMetricsForDpi(11, dpi)          # SM_CXICON
+            small = _u32.GetSystemMetricsForDpi(49, dpi)        # SM_CXSMICON
+        except AttributeError:
+            big, small = _u32.GetSystemMetrics(11), _u32.GetSystemMetrics(49)
+        _u32.LoadImageW.restype = wintypes.HANDLE
+        _u32.LoadImageW.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR, wintypes.UINT, ctypes.c_int, ctypes.c_int, wintypes.UINT]
+        _u32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+        hbig = _u32.LoadImageW(None, str(ico), 1, big, big, 0x10)        # IMAGE_ICON, LR_LOADFROMFILE
+        hsmall = _u32.LoadImageW(None, str(ico), 1, small, small, 0x10)
+        if hbig:
+            _u32.SendMessageW(hwnd, 0x80, 1, hbig)                    # WM_SETICON, ICON_BIG
+        if hsmall:
+            _u32.SendMessageW(hwnd, 0x80, 0, hsmall)                  # ICON_SMALL
+        root._win_icons = (hbig, hsmall)                               # keep them alive
+    except Exception:
+        pass
+
+
 def is_admin() -> bool:
     if not IS_WIN:
         return False
@@ -1144,7 +1172,7 @@ def desktop_dir() -> Path:
     return home() / "Desktop"
 
 
-ICON_REV = 2          # bump when the Workshop's icon changes: shortcuts and Windows' icon cache get refreshed
+ICON_REV = 3          # bump when the Workshop's icon changes: shortcuts and Windows' icon cache get refreshed
 
 
 def pinned_shortcut() -> Path:
