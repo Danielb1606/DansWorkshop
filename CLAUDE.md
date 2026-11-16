@@ -52,8 +52,11 @@ opens, shows and updates them. Owner: GitHub `Danielb1606`. Repo: `Danielb1606/D
 - Everything runs as administrator. A scheduled task (`Dan's Workshop`, RunLevel Highest, Priority 4) +
   Desktop shortcut (`schtasks /run`) skip the UAC prompt; set up automatically on first elevated run and
   re-done if the folder moves (settings.task_path).
-- "Check for updates" button checks every app + the hub. Hub self-update: zip download, `swap.cmd`
-  swaps exe + _internal after exit, rolls back if the new one doesn't write `update\started.flag` in 45 s.
+- "Check for updates" button checks every app + the hub. Hub self-update: zip download + extract to
+  workshop_data\update\new, then that NEW exe is started with `--install-update <old pid> <base>`: it waits for
+  the old one to exit, swaps exe + _internal (keeps .old), starts the Workshop with `--updated`, and rolls back
+  if it doesn't write `update\started.flag` in 45 s. (1.0-1.3.1 used a swap.cmd whose wait loop failed when
+  detached - updates from those versions never installed; Dan had to extract 1.3.2 by hand once.)
 - "Request a change" (card menu) copies a brief pointing at the app's repo CLAUDE.md and opens claude.ai.
 - Lightweight: no background work except a 3 s process check; nothing runs when idle.
 
@@ -69,7 +72,8 @@ Run `python tests/test_core.py` first.
 
 ## History
 - 1.0.0 - first version.
-- 1.3.1 - app icons on tiles (`icon` field, assets/app_<id>.png): Daniels Assignment = red flask (Dan picked option A).
+- 1.3.2 - fixed self-update (new version installs itself instead of swap.cmd).
+- 1.3.1 - app icons on tiles (`icon` field, assets/app_<id>.png): Daniels Assignment = red flask (Dan picked option A); Deadlock = DL art-deco diamond with a big outlined brass gear (option 3).
 - 1.3.0 - Deadlock Auto Config tile; cards no longer cut off by the scrollbar.
 - 1.2.0 - notes in the Workshop, automatic notes backups, restore, Install Obsidian.
 - 1.1.0 - Obsidian tile.

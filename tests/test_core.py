@@ -103,8 +103,29 @@ b = core.change_brief(pt, "1.5.5")
 check("CLAUDE.md" in b and "1.5.5" in b and "Danielb1606/PokerTrainer" in b, "change brief")
 x = core.task_xml(Path(r"C:\Users\Dan\Dan's Workshop\Dan's Workshop.exe"))
 check("HighestAvailable" in x and "<Priority>4</Priority>" in x and "Dan's Workshop.exe" in x, "task xml")
-sc = core.updater_script(Path(r"C:\W"), Path(r"C:\W\workshop_data\update\new"), Path(r"C:\W\workshop_data"), 1234, "1.0.1")
-check("PID eq 1234" in sc and "_internal.old" in sc and "--update-failed" in sc and "started.flag" in sc, "swap script")
+# hub self-update: the new version installs itself once the old one has closed
+import subprocess as sp
+def fake_install(tag):
+    b = tmp / f"inst_{tag}"; n = b / "workshop_data" / "update" / "new"
+    (b / "_internal").mkdir(parents=True); (b / "_internal" / "old.dll").write_text("old")
+    (b / core.EXE_NAME).write_text("old exe"); (b / "apps").mkdir(); (b / "apps" / "keep.txt").write_text("app data")
+    (n / "_internal").mkdir(parents=True); (n / "_internal" / "new.dll").write_text("new"); (n / core.EXE_NAME).write_text("new exe")
+    return b, n
+done = sp.Popen(["true"]); done.wait()
+b, n = fake_install("ok")
+def ok_launch(exe, args):
+    if "--updated" in args:
+        f = b / "workshop_data" / "update" / "started.flag"; f.write_text("ok")
+    return None
+check(core.install_update_helper(done.pid, b, n, ok_launch, start_timeout=3), "update installs")
+check((b / core.EXE_NAME).read_text() == "new exe" and (b / "_internal" / "new.dll").exists()
+      and not (b / "_internal" / "old.dll").exists(), "new program files in place")
+check((b / "apps" / "keep.txt").read_text() == "app data", "apps and data untouched by an update")
+b, n = fake_install("bad")
+calls = []
+check(not core.install_update_helper(done.pid, b, n, lambda e, a: calls.append(a), start_timeout=1), "failed start detected")
+check((b / core.EXE_NAME).read_text() == "old exe" and (b / "_internal" / "old.dll").exists(), "old version put back")
+check(calls[-1] == ["--update-failed"], "old version restarted with a message")
 
 # hub startup marks the new version as started
 msg = core.hub_startup(["--updated", "1.0.0"])

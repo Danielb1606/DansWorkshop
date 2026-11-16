@@ -1514,6 +1514,10 @@ class AddAppDialog(tk.Toplevel):
 
 
 def launch(args: List[str]) -> None:
+    if "--install-update" in args:          # this is the new version installing itself; no window
+        i = args.index("--install-update")
+        core.install_update_helper(int(args[i + 1]), Path(args[i + 2]))
+        return
     if core.IS_WIN:
         try:
             import ctypes

@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
-__version__ = "1.3.1"
+__version__ = "1.3.2"
 APP_NAME = "Dan's Workshop"
 EXE_NAME = "Dan's Workshop.exe"
 HUB_REPO = "Danielb1606/DansWorkshop"
@@ -208,6 +208,7 @@ BUILTIN = [
     AppDef(
         id="deadlock-config", name="Deadlock Auto Config", folder="Deadlock Auto Config",
         exe="Apply Deadlock Settings.bat", kind="script", play_label="Apply settings", initials="DL",
+        icon="app_deadlock-config.png",
         actions=[("Save my current in-game settings", "Save My Current In-Game Settings.bat"),
                  ("Change aspect ratio", "Change Aspect Ratio.bat")],
         import_from=r"%USERPROFILE%\Desktop\Deadlock config files\Deadlock Auto Config",
@@ -1082,50 +1083,22 @@ def hub_latest() -> Optional[UpdateInfo]:
                       a["browser_download_url"], int(a.get("size") or 0))
 
 
-def updater_script(base: Path, new_dir: Path, data: Path, pid: int, version: str) -> str:
-    """Batch file that swaps in the new hub once this one has closed, and puts
-    the old one back if the new one doesn't start."""
-    b, n, flag = str(base), str(new_dir), str(data / UPDATE_DIR_NAME / "started.flag")
-    exe = str(base / EXE_NAME)
-    return f"""@echo off
-setlocal
-:wait
-tasklist /FI "PID eq {pid}" 2>nul | find "{pid}" >nul && (timeout /t 1 /nobreak >nul & goto wait)
-if exist "{b}\\_internal.old" rd /s /q "{b}\\_internal.old"
-if exist "{b}\\{EXE_NAME[:-4]}.old.exe" del /f /q "{b}\\{EXE_NAME[:-4]}.old.exe"
-ren "{b}\\_internal" _internal.old || goto fail
-move /y "{exe}" "{b}\\{EXE_NAME[:-4]}.old.exe" >nul || goto undo1
-robocopy "{n}" "{b}" /E /MOVE /NFL /NDL /NJH /NJS /NP >nul
-if not exist "{exe}" goto undo2
-del /f /q "{flag}" 2>nul
-start "" "{exe}" --updated {version}
-set /a n=0
-:check
-timeout /t 1 /nobreak >nul
-if exist "{flag}" goto done
-set /a n+=1
-if %n% lss 45 goto check
-taskkill /f /im "{EXE_NAME}" >nul 2>&1
-timeout /t 1 /nobreak >nul
-:undo2
-if exist "{b}\\_internal" rd /s /q "{b}\\_internal"
-if exist "{exe}" del /f /q "{exe}"
-move /y "{b}\\{EXE_NAME[:-4]}.old.exe" "{exe}" >nul
-:undo1
-ren "{b}\\_internal.old" _internal
-start "" "{exe}" --update-failed
-goto end
-:fail
-start "" "{exe}" --update-failed
-goto end
-:done
-:end
-endlocal
-"""
+def _detached(args: List[str], cwd: Path) -> subprocess.Popen:
+    """Start a program that keeps running after this one closes, even when the
+    Workshop itself was started by the Windows task."""
+    if not IS_WIN:
+        return subprocess.Popen(args, cwd=str(cwd), env=clean_env(), close_fds=True)
+    base = 0x00000008 | 0x00000200                      # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+    try:
+        return subprocess.Popen(args, cwd=str(cwd), env=clean_env(), close_fds=True,
+                                creationflags=base | 0x01000000)        # CREATE_BREAKAWAY_FROM_JOB
+    except OSError:
+        return subprocess.Popen(args, cwd=str(cwd), env=clean_env(), close_fds=True, creationflags=base)
 
 
 def start_hub_update(info: UpdateInfo, progress=lambda f: None) -> None:
-    """Download and unpack the new hub, then hand over to the swap script.
+    """Download and unpack the new Workshop, then start it in 'installer' mode:
+    it waits for this copy to close, swaps itself in and starts the Workshop.
     The caller should close the window straight after this returns."""
     import zipfile
     up = DATA_DIR / UPDATE_DIR_NAME
@@ -1136,17 +1109,105 @@ def start_hub_update(info: UpdateInfo, progress=lambda f: None) -> None:
     new_dir = up / "new"
     with zipfile.ZipFile(z) as zf:
         zf.extractall(new_dir)
-    # the zip may contain a top folder
     if not (new_dir / EXE_NAME).exists():
         inner = [p for p in new_dir.iterdir() if (p / EXE_NAME).exists()]
         if not inner:
             raise RuntimeError("the update didn't contain the program")
         new_dir = inner[0]
     z.unlink(missing_ok=True)
-    script = up / "swap.cmd"
-    script.write_text(updater_script(BASE, new_dir, DATA_DIR, os.getpid(), info.version), encoding="mbcs" if IS_WIN else "utf-8")
-    subprocess.Popen(["cmd", "/c", str(script)], cwd=str(up), env=clean_env(),
-                     creationflags=0x08000000 | 0x00000008 if IS_WIN else 0, close_fds=True)
+    _detached([str(new_dir / EXE_NAME), "--install-update", str(os.getpid()), str(BASE)], new_dir)
+
+
+def _wait_for_exit(pid: int, timeout: float = 60) -> None:
+    if IS_WIN:
+        h = _k32.OpenProcess(0x00100000, False, pid)            # SYNCHRONIZE
+        if h:
+            _k32.WaitForSingleObject(h, int(timeout * 1000))
+            _k32.CloseHandle(h)
+        return
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return
+        time.sleep(0.2)
+
+
+def _retry(fn, tries: int = 20, gap: float = 0.5):
+    for i in range(tries):
+        try:
+            return fn()
+        except OSError:
+            if i == tries - 1:
+                raise
+            time.sleep(gap)
+
+
+def install_update_helper(old_pid: int, base: Path, src: Optional[Path] = None,
+                          launch=lambda exe, args: _detached([str(exe)] + args, exe.parent),
+                          start_timeout: float = 45) -> bool:
+    """Runs inside the NEW version (started from workshop_data\\update\\new). Waits for
+    the old Workshop to close, swaps the program files, starts the new Workshop and
+    checks it really started; otherwise puts the old version back. Settings, apps,
+    notes and backups are never touched (only the exe and _internal)."""
+    base = Path(base)
+    src = Path(src or Path(sys.executable).parent)
+    exe, internal = base / EXE_NAME, base / "_internal"
+    old_exe, old_internal = base / (EXE_NAME[:-4] + ".old.exe"), base / "_internal.old"
+    flag = base / "workshop_data" / UPDATE_DIR_NAME / "started.flag"
+    _wait_for_exit(old_pid)
+    time.sleep(0.5)
+    shutil.rmtree(old_internal, ignore_errors=True)
+    try:
+        old_exe.unlink(missing_ok=True)
+    except OSError:
+        pass
+    moved = []
+    try:
+        _retry(lambda: os.replace(internal, old_internal)); moved.append("internal")
+        _retry(lambda: os.replace(exe, old_exe)); moved.append("exe")
+        shutil.copytree(src / "_internal", internal)
+        shutil.copy2(src / EXE_NAME, exe)
+    except Exception:
+        _rollback(base, moved)
+        launch(exe, ["--update-failed"])
+        return False
+    flag.unlink(missing_ok=True)
+    proc = launch(exe, ["--updated", __version__])
+    end = time.time() + start_timeout
+    while time.time() < end:
+        if flag.exists():
+            return True
+        if proc is not None and proc.poll() is not None and not flag.exists():
+            break
+        time.sleep(0.3)
+    try:
+        if proc is not None:
+            proc.kill()
+    except Exception:
+        pass
+    time.sleep(0.5)
+    _rollback(base, ["internal", "exe"])
+    launch(exe, ["--update-failed"])
+    return False
+
+
+def _rollback(base: Path, moved: List[str]) -> None:
+    exe, internal = base / EXE_NAME, base / "_internal"
+    old_exe, old_internal = base / (EXE_NAME[:-4] + ".old.exe"), base / "_internal.old"
+    if "exe" in moved:
+        try:
+            exe.unlink(missing_ok=True)
+            _retry(lambda: os.replace(old_exe, exe))
+        except OSError:
+            pass
+    if "internal" in moved:
+        shutil.rmtree(internal, ignore_errors=True)
+        try:
+            _retry(lambda: os.replace(old_internal, internal))
+        except OSError:
+            pass
 
 
 def hub_startup(args: List[str]) -> str:
