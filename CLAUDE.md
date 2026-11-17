@@ -75,6 +75,7 @@ Run `python tests/test_core.py` first.
 
 ## History
 - 1.0.0 - first version.
+- 1.3.8 - app updates use their own temp names (.workshop-new.exe) so they never collide with Daniels Assignment's self-updater (.new.exe), skip if the app already updated itself, retry locked files, restore on failure.
 - 1.3.7 - Rename… and Change picture… at the top of every tile's ⋯ menu (state apps[id].name; empty = default);
   square custom pictures show whole like icons; 'Use its own picture again' resets.
 - 1.3.6 - icon = design B: gold toolbox on a dark tile with a gold edge, NO glow (Dan's pick); each size drawn

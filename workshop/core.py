@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
-__version__ = "1.3.7"
+__version__ = "1.3.8"
 APP_NAME = "Dan's Workshop"
 EXE_NAME = "Dan's Workshop.exe"
 HUB_REPO = "Danielb1606/DansWorkshop"
@@ -440,16 +440,39 @@ def download(url: str, dest: Path, size: int = 0, sha256: str = "",
         raise RuntimeError("the download was damaged or incomplete - try again")
 
 
+def app_busy(app: AppDef) -> bool:
+    """Is the app (or its own updater's renamed copy) running right now?"""
+    if not IS_WIN:
+        return False
+    folder = str(app.dir.resolve()).lower()
+    stem = app.exe_path.stem.lower()
+    return any(p.startswith(folder) and Path(p).name.startswith(stem) for p in running_pids())
+
+
 def install_update(app: AppDef, info: UpdateInfo, progress=lambda f: None) -> None:
     """Put a new version in place. The app must be closed."""
     if app.kind == "github-exe":
-        new = app.exe_path.with_suffix(".new.exe")
+        exe = app.exe_path
+        # own file names, so this never collides with the app's own updater (it uses .new.exe/.old.exe)
+        new, old = exe.with_name(exe.stem + ".workshop-new.exe"), exe.with_name(exe.stem + ".workshop-old.exe")
+        new.unlink(missing_ok=True)
         download(info.url, new, info.size, "", progress)
-        old = app.exe_path.with_suffix(".old.exe")
+        if exe.exists() and exe.stat().st_size == info.size:
+            new.unlink(missing_ok=True)                  # the app already updated itself meanwhile
+            return
+        if app_busy(app):
+            new.unlink(missing_ok=True)
+            raise RuntimeError(f"{app.name} is open or updating itself - close it and try again")
         old.unlink(missing_ok=True)
-        if app.exe_path.exists():
-            os.replace(app.exe_path, old)
-        os.replace(new, app.exe_path)
+        _retry(lambda: os.replace(exe, old))             # antivirus may hold a fresh file for a moment
+        try:
+            _retry(lambda: os.replace(new, exe))
+        except OSError:
+            try:
+                os.replace(old, exe)                     # put the working version back
+            except OSError:
+                pass
+            raise
         try:
             old.unlink()
         except OSError:
